@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ChangeDiffResponse, ChangeEntry, ChangesResponse } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
@@ -60,7 +61,7 @@ function diffLines(text: string): string[] {
   return text.length === 0 ? [] : text.split("\n");
 }
 
-export function ChangesView({ paneId }: { paneId: string }): JSX.Element {
+export function ChangesView({ paneId, onClose }: { paneId: string; onClose: () => void }): JSX.Element {
   const t = useT();
   const machineId = useMachineId();
   const { fetchPaneChanges, fetchPaneChangeDiff } = useMachineApi();
@@ -156,7 +157,10 @@ export function ChangesView({ paneId }: { paneId: string }): JSX.Element {
     const diff = screen.diff;
     return (
       <div className="changes-view">
-        <button type="button" className="btn changes-back" onClick={() => startListRef.current(true)}>{t("Back")}</button>
+        <div className="changes-bar">
+          <button type="button" className="btn changes-back" onClick={() => startListRef.current(true)}>{t("Back")}</button>
+          <button type="button" className="icon-button changes-close" aria-label={t("Close changes")} onClick={onClose}><X aria-hidden="true" /></button>
+        </div>
         {diff.state === "error" ? (
           <p role="status">{diff.message === UPDATE_SENTENCE ? t("This PC needs an update to show changes.") : diff.message}</p>
         ) : diff.state === "ready" ? <DiffBody body={diff.body} /> : null}
@@ -167,9 +171,12 @@ export function ChangesView({ paneId }: { paneId: string }): JSX.Element {
   const list = screen.list;
   return (
     <div className="changes-view">
-      {list.kind === "rows" && (
-        <h2 className="changes-heading">{list.rows.length === 1 ? t("1 file") : t("{count} files", { count: list.rows.length })}</h2>
-      )}
+      <div className="changes-bar">
+        {list.kind === "rows" && (
+          <h2 className="changes-heading">{list.rows.length === 1 ? t("1 file") : t("{count} files", { count: list.rows.length })}</h2>
+        )}
+        <button type="button" className="icon-button changes-close" aria-label={t("Close changes")} onClick={onClose}><X aria-hidden="true" /></button>
+      </div>
       {list.kind === "rows" && list.error !== null && <p className="changes-note" role="status">{list.error}</p>}
       {(list.kind === "empty" || list.kind === "not_git") && list.error !== null && <p className="changes-note" role="status">{list.error}</p>}
       {list.kind === "empty" && <p className="changes-note" role="status">{t("No uncommitted changes")}</p>}

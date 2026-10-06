@@ -116,6 +116,7 @@ export const KO: Record<string, string> = {
   "Chat transcript (⌘⇧J)": "채팅 기록 (⌘⇧J)",
   "Changes": "변경 사항",
   "Changes (⌘⇧G)": "변경 사항 (⌘⇧G)",
+  "Close changes": "변경 사항 닫기",
   "No uncommitted changes": "커밋되지 않은 변경이 없습니다",
   "This workspace is not a git checkout": "이 워크스페이스는 git 체크아웃이 아닙니다",
   "This PC needs an update to show changes.": "변경을 보려면 이 PC를 업데이트해야 합니다.",

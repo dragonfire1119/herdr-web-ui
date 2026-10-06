@@ -79,6 +79,8 @@ export interface PaneTerminalProps {
   onConnectionChange?: (connected: boolean) => void;
   /** Every server frame also reaches App: it merges pane-status and schedules refetches. */
   onServerMessage?: (message: ServerMessage) => void;
+  /** Leaves the Changes lens for the one it covered. */
+  onCloseChanges: () => void;
 }
 
 
@@ -121,6 +123,7 @@ export function PaneTerminal({
   onRoleAck,
   onConnectionChange,
   onServerMessage,
+  onCloseChanges,
 }: PaneTerminalProps) {
   const t = useT();
   const openFile = useContext(OpenFileContext);
@@ -1593,7 +1596,7 @@ export function PaneTerminal({
           </RenderBoundary>
         )}
       </div>
-      {changesView && paneId !== null && <ChangesView key={paneId} paneId={paneId} />}
+      {changesView && paneId !== null && <ChangesView key={paneId} paneId={paneId} onClose={onCloseChanges} />}
       {/* the queue is the composer's, so it shows under the chat lens only: there alone is an open
           Codex question known (heldByOpenQueue), and Send now must not type into one */}
       {paneId !== null && chatView && !observing && !ended && queueOwner !== null && queued.length > 0 && (

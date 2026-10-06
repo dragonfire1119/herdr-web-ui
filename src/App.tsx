@@ -859,6 +859,7 @@ export function App() {
             onRoleAck={setRole}
             onConnectionChange={(next) => { setConnected(next); if (next) setOutputStopped(false); }}
             onServerMessage={handleServerMessage}
+            onCloseChanges={() => applyLens({ type: "show-changes" })}
           />
         </main>
         </div>

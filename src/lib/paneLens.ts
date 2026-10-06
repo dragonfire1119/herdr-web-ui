@@ -33,14 +33,13 @@ export function reducePaneLens(lens: PaneLens, event: LensEvent, ctx: { hasPane:
       if (lens.view === event.view) return lens;
       return withView(lens, event.view);
     case "press-changes":
-      if (lens.view === "changes") return lens;
+      if (lens.view === "changes") return withView(lens, jTarget(lens, ctx.hasAgent));
       return { paneKey: lens.paneKey, contextKey: lens.contextKey, view: "changes", prior: lens.view };
     case "cycle":
       if (lens.view === "changes") return withView(lens, jTarget(lens, ctx.hasAgent));
       return withView(lens, lens.view === "chat" ? "terminal" : "chat");
     case "show-changes":
       if (!ctx.hasPane) return lens;
-      if (lens.view === "changes") return withView(lens, jTarget(lens, ctx.hasAgent));
       return reducePaneLens(lens, { type: "press-changes" }, ctx);
   }
 }

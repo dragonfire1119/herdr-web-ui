@@ -35,9 +35,10 @@ describe("reducePaneLens", () => {
     expect(reducePaneLens(chat, { type: "press", view: "chat" }, ctx)).toBe(chat);
   });
 
-  it("remembers the lens Changes was opened from and ignores a second press", () => {
+  it("remembers the lens Changes was opened from and closes on a second press", () => {
     expect(reducePaneLens(terminal, { type: "press-changes" }, ctx)).toEqual({ paneKey: "p", contextKey: "c", view: "changes", prior: "terminal" });
-    expect(reducePaneLens(fromChat, { type: "press-changes" }, ctx)).toBe(fromChat);
+    expect(reducePaneLens(fromChat, { type: "press-changes" }, ctx)).toEqual({ paneKey: "p", contextKey: "c", view: "chat" });
+    expect(reducePaneLens(restored, { type: "press-changes" }, { hasPane: true, hasAgent: false }).view).toBe("terminal");
   });
 
   it("cycles chat and terminal, and leaves Changes for the remembered lens", () => {

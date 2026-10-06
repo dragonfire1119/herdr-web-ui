@@ -120,6 +120,7 @@ export const ZH: Record<string, string> = {
   "Chat transcript (⌘⇧J)": "聊天记录 (⌘⇧J)",
   "Changes": "更改",
   "Changes (⌘⇧G)": "更改 (⌘⇧G)",
+  "Close changes": "关闭更改",
   "No uncommitted changes": "没有未提交的更改",
   "This workspace is not a git checkout": "此工作区不是 git 检出",
   "This PC needs an update to show changes.": "此电脑需要更新才能显示更改。",

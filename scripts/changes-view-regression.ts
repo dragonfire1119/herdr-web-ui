@@ -43,10 +43,25 @@ export async function checkChangesView(browser: Browser, origin: string, dirtyPa
     assert.equal(await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).getAttribute("aria-pressed"), "true");
     await page.getByTitle("Changes (⌘⇧G)", { exact: true }).click();
     assert.equal(await page.getByTitle("Changes (⌘⇧G)", { exact: true }).getAttribute("aria-pressed"), "true");
+    await page.getByRole("button", { name: "Close changes", exact: true }).click();
+    await page.locator(".changes-view").waitFor({ state: "detached" });
+    assert.equal(await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).getAttribute("aria-pressed"), "true");
+    await page.getByTitle("Changes (⌘⇧G)", { exact: true }).click();
+    await page.locator(".changes-view").waitFor();
+    await page.getByTitle("Changes (⌘⇧G)", { exact: true }).click();
+    await page.locator(".changes-view").waitFor({ state: "detached" });
+    assert.equal(await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).getAttribute("aria-pressed"), "true");
+    await page.getByTitle("Changes (⌘⇧G)", { exact: true }).click();
+    assert.equal(await page.getByTitle("Changes (⌘⇧G)", { exact: true }).getAttribute("aria-pressed"), "true");
     await page.reload();
     await page.locator(".conn-live").waitFor();
     assert.equal(await page.getByTitle("Changes (⌘⇧G)", { exact: true }).getAttribute("aria-pressed"), "true");
     await page.locator(".changes-view").waitFor();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByRole("button", { name: "Close changes", exact: true }).click();
+    await page.locator(".changes-view").waitFor({ state: "detached" });
+    assert.equal(await page.getByTitle("Changes (⌘⇧G)", { exact: true }).getAttribute("aria-pressed"), "false");
+    await page.setViewportSize({ width: 1280, height: 800 });
 
     await page.goto(`${origin}/?pane=${encodeURIComponent(plainPane)}`);
     await page.locator(".conn-live").waitFor();
@@ -67,7 +82,7 @@ export async function checkChangesView(browser: Browser, origin: string, dirtyPa
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     assert.deepEqual(errors, []);
-    console.log("PASS changes view: list, diff, non-git folder, lens return, Stop sends Escape");
+    console.log("PASS changes view: list, diff, non-git folder, lens return, close, Stop sends Escape");
   } finally {
     await context.close();
   }

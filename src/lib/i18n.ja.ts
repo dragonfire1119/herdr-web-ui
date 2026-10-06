@@ -118,6 +118,7 @@ export const JA: Record<string, string> = {
   "Chat transcript (⌘⇧J)": "チャット履歴 (⌘⇧J)",
   "Changes": "変更",
   "Changes (⌘⇧G)": "変更 (⌘⇧G)",
+  "Close changes": "変更を閉じる",
   "No uncommitted changes": "未コミットの変更はありません",
   "This workspace is not a git checkout": "このワークスペースは git のチェックアウトではありません",
   "This PC needs an update to show changes.": "変更を表示するには、この PC の更新が必要です。",

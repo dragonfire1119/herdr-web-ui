@@ -12,6 +12,16 @@
   gap: var(--space-2);
 }
 
+.changes-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.changes-close {
+  margin-inline-start: auto;
+}
+
 .changes-heading,
 .changes-note {
   margin: 0;
@@ -72,6 +82,4 @@
   color: var(--status-blocked);
 }
 
-.changes-back {
-  align-self: flex-start;
-}
+
