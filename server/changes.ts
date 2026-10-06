@@ -52,6 +52,9 @@ function isEnoent(error: unknown): boolean {
 }
 
 function gitFailedMessage(stderr: string): string {
+  if (stderr.includes("attr-source") && (stderr.includes("unknown option") || stderr.includes("unrecognized argument"))) {
+    return "git 2.43 or newer is required";
+  }
   const line = stderr.split("\n", 1)[0] ?? "";
   const trimmed = line.trim().slice(0, 200);
   return trimmed.length === 0 ? "git failed" : trimmed;
@@ -97,14 +100,17 @@ async function takeStdout(stream: ReadableStream<Uint8Array>, cap: number | unde
   return { bytes, capped };
 }
 
-function runGit(
+const FILTER_COMMAND = /^filter\.([^.]+)\.(clean|smudge|process|required)$/;
+const SAFE_FILTER_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+function spawnGit(
   cwd: string,
   args: readonly string[],
   options?: { env?: Record<string, string | undefined>; stdoutCap?: number; acceptExit?: readonly number[] },
 ): Promise<GitRun | GitFailure> {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
-    proc = Bun.spawn(["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
+    proc = Bun.spawn(["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "--no-pager", ...args], {
       cwd,
       stdout: "pipe",
       stderr: "pipe",
@@ -138,6 +144,41 @@ function runGit(
     } finally {
       clearTimeout(timer);
     }
+  })();
+}
+
+async function filterPrefix(cwd: string): Promise<string[] | GitFailure> {
+  const listed = await spawnGit(cwd, ["-C", cwd, "config", "--list", "--name-only"]);
+  if ("error" in listed) return listed;
+  const names = new Set<string>();
+  for (const line of new TextDecoder().decode(listed.stdout).split("\n")) {
+    const match = FILTER_COMMAND.exec(line.trim());
+    if (match === null) continue;
+    const name = match[1] ?? "";
+    if (!SAFE_FILTER_NAME.test(name)) return { error: "git_failed", message: "git failed" };
+    names.add(name);
+  }
+  const prefix = ["-c", "core.attributesFile=/dev/null"];
+  for (const name of names) {
+    prefix.push(
+      "-c", `filter.${name}.clean=`,
+      "-c", `filter.${name}.smudge=`,
+      "-c", `filter.${name}.process=`,
+      "-c", `filter.${name}.required=false`,
+    );
+  }
+  return prefix;
+}
+
+function runGit(
+  cwd: string,
+  args: readonly string[],
+  options?: { env?: Record<string, string | undefined>; stdoutCap?: number; acceptExit?: readonly number[] },
+): Promise<GitRun | GitFailure> {
+  return (async () => {
+    const prefix = await filterPrefix(cwd);
+    if (!Array.isArray(prefix)) return prefix;
+    return spawnGit(cwd, [...prefix, ...args], options);
   })();
 }
 

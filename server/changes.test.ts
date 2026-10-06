@@ -351,6 +351,35 @@ describe("paneChangeDiff", () => {
     }
   });
 
+  it("does not run a clean filter named by info/attributes or a global config", async () => {
+    const cwd = scratch();
+    const mark = join(cwd, "FILTER-RAN");
+    const attrs = join(scratch(), "attrs");
+    const globalFile = join(scratch(), "global-gitconfig");
+    writeFileSync(attrs, "* filter=evil\n");
+    writeFileSync(globalFile, `[filter "evil"]\n\tclean = touch ${mark}; cat\n\tprocess = touch ${mark}; cat\n`);
+    git(cwd, "init", "-q", "-b", "main");
+    writeFileSync(join(cwd, "file.txt"), "base\n");
+    git(cwd, "add", "--", "file.txt");
+    git(cwd, "commit", "-q", "-m", "base");
+    writeFileSync(join(cwd, "file.txt"), "hack\n");
+    mkdirSync(join(cwd, ".git", "info"), { recursive: true });
+    writeFileSync(join(cwd, ".git", "info", "attributes"), "* filter=evil\n");
+    git(cwd, "config", "core.attributesFile", attrs);
+    const previous = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = globalFile;
+    try {
+      expect(listed(await paneChanges(cwd))).toEqual([{ path: "file.txt", code: " M" }]);
+      expect(existsSync(mark)).toBe(false);
+      const body = diffed(await paneChangeDiff(cwd, "file.txt"));
+      expect(body.text).toContain("hack");
+      expect(existsSync(mark)).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previous;
+    }
+  });
+
   it("shows the worktree bytes when the checkout configures textconv or a clean filter", async () => {
     const cwd = scratch();
     git(cwd, "init", "-q", "-b", "main");

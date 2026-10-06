@@ -27,9 +27,10 @@ bun --version        # need 1.4 or newer
 node --version       # Linux/macOS only: need v18 or newer for the terminal-attach sidecar
 herdr --version      # need 0.9.0 or newer
 herdr status server  # the herdr server must be running
-git --version
+git --version        # 2.43 or newer for the Changes view
 ```
 
+- Git older than 2.43 still runs the app. The Changes view says it needs 2.43 or newer.
 - A missing tool: **Ask** the user before installing it. Bun: `curl -fsSL https://bun.sh/install | bash`.
   herdr: <https://herdr.dev>. Node: the user's usual manager (nvm, Homebrew, distro packages).
 - herdr not running: ask the user to start `herdr` in a terminal, then check again.
