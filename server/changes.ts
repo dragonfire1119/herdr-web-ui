@@ -1,10 +1,16 @@
-import type { ChangeEntry, ChangesResponse } from "../shared/protocol.ts";
+import { open, realpath } from "node:fs/promises";
+import { isAbsolute, join, sep } from "node:path";
+import type { ChangeDiffResponse, ChangeEntry, ChangesResponse } from "../shared/protocol.ts";
 
 export type GitErrorCode = "git_unavailable" | "git_timeout" | "git_failed";
 
 export type ChangesResult =
   | ChangesResponse
   | { error: GitErrorCode; message: string };
+
+export type ChangeDiffResult =
+  | ChangeDiffResponse
+  | { error: "invalid_path" | "not_a_change" | GitErrorCode; message: string };
 
 type GitFailure = { error: GitErrorCode; message: string };
 
@@ -119,4 +125,117 @@ export async function paneChanges(cwd: string): Promise<ChangesResult> {
   const changes = run.rows.map(toEntry);
   changes.sort((left, right) => left.path.localeCompare(right.path));
   return { git: true, changes };
+}
+
+type DiffBody =
+  | { kind: "diff"; text: string; truncated: boolean }
+  | { kind: "untracked"; text: string; truncated: boolean }
+  | { kind: "binary"; text: ""; truncated: false }
+  | { kind: "empty"; text: ""; truncated: false };
+
+const DIFF_CAP = 256 * 1024;
+const NUL_PROBE = 8192;
+
+function lexicalChangePath(path: string): boolean {
+  if (path.length === 0 || path.includes("\\") || path.includes("\0") || isAbsolute(path)) return false;
+  return path.split("/").every((segment) => segment.length > 0 && segment !== "..");
+}
+
+function capDiffText(text: string): { text: string; truncated: boolean } {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.byteLength <= DIFF_CAP) return { text, truncated: false };
+  let lastNl = -1;
+  for (let i = 0; i < DIFF_CAP; i++) if (bytes[i] === 0x0a) lastNl = i;
+  const cut = lastNl >= 0 ? lastNl + 1 : DIFF_CAP;
+  let decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(0, cut), { stream: true });
+  while (new TextEncoder().encode(decoded).byteLength > DIFF_CAP) decoded = decoded.slice(0, -1);
+  return { text: decoded, truncated: true };
+}
+
+async function repositoryTop(cwd: string): Promise<{ top: string } | GitFailure> {
+  const run = await runGit(cwd, ["-C", cwd, "--no-optional-locks", "rev-parse", "--show-toplevel"]);
+  if ("error" in run) return run;
+  const top = new TextDecoder().decode(run.stdout).trim();
+  if (top.length === 0) return { error: "git_failed", message: "git failed" };
+  return { top };
+}
+
+function insideFolder(fileReal: string, folderReal: string): boolean {
+  if (fileReal === folderReal) return true;
+  const prefix = folderReal.endsWith(sep) ? folderReal : folderReal + sep;
+  return fileReal.startsWith(prefix);
+}
+
+function untrackedText(statusPath: string, contents: string): string {
+  const header = `--- /dev/null\n+++ b/${statusPath}\n`;
+  if (contents.length === 0) return header;
+  const lines = contents.endsWith("\n") ? contents.slice(0, -1).split("\n") : contents.split("\n");
+  return `${header}@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}\n`).join("")}`;
+}
+
+async function untrackedBody(top: string, paneFolder: string, statusPath: string): Promise<DiffBody | { error: "invalid_path"; message: "path is invalid" }> {
+  const invalid = { error: "invalid_path" as const, message: "path is invalid" as const };
+  let fileReal: string;
+  let folderReal: string;
+  try {
+    fileReal = await realpath(join(top, statusPath));
+    folderReal = await realpath(paneFolder);
+  } catch {
+    return invalid;
+  }
+  if (!insideFolder(fileReal, folderReal)) return invalid;
+  let fh: Awaited<ReturnType<typeof open>>;
+  try {
+    fh = await open(fileReal, "r");
+  } catch {
+    return invalid;
+  }
+  try {
+    const probe = Buffer.alloc(NUL_PROBE);
+    const first = await fh.read(probe, 0, NUL_PROBE, 0);
+    const n = first.bytesRead;
+    if (probe.subarray(0, n).includes(0)) return { kind: "binary", text: "", truncated: false };
+    let buf = Buffer.from(probe.subarray(0, n));
+    let position = n;
+    const chunk = Buffer.alloc(64 * 1024);
+    while (Buffer.byteLength(untrackedText(statusPath, new TextDecoder().decode(buf))) <= DIFF_CAP) {
+      const more = await fh.read(chunk, 0, chunk.length, position);
+      if (more.bytesRead === 0) break;
+      buf = Buffer.concat([buf, chunk.subarray(0, more.bytesRead)]);
+      position += more.bytesRead;
+    }
+    const capped = capDiffText(untrackedText(statusPath, new TextDecoder().decode(buf)));
+    return { kind: "untracked", text: capped.text, truncated: capped.truncated };
+  } catch {
+    return invalid;
+  } finally {
+    await fh.close();
+  }
+}
+
+async function trackedBody(top: string, statusPath: string): Promise<DiffBody | GitFailure> {
+  const run = await runGit(top, ["-C", top, "--no-optional-locks", "diff", "--no-ext-diff", "--no-color", "-U3", "HEAD", "--", statusPath]);
+  if ("error" in run) return run;
+  const text = new TextDecoder().decode(run.stdout);
+  if (run.stdout.length === 0) return { kind: "empty", text: "", truncated: false };
+  for (const line of text.split("\n")) {
+    if (line === "GIT binary patch" || line.startsWith("Binary files ")) return { kind: "binary", text: "", truncated: false };
+  }
+  const capped = capDiffText(text);
+  return { kind: "diff", text: capped.text, truncated: capped.truncated };
+}
+
+export async function paneChangeDiff(cwd: string, path: string): Promise<ChangeDiffResult> {
+  if (!lexicalChangePath(path)) return { error: "invalid_path", message: "path is invalid" };
+  const run = await statusOf(cwd);
+  if (run.type === "not_repository" || run.type === "failed") return run.failure;
+  const row = run.rows.find((candidate) => candidate.path === path);
+  if (row === undefined) return { error: "not_a_change", message: "path is not an uncommitted file" };
+  const top = await repositoryTop(cwd);
+  if ("error" in top) return top;
+  const body = row.code === "??" ? await untrackedBody(top.top, cwd, row.path) : await trackedBody(top.top, row.path);
+  if ("error" in body) return body;
+  const response: ChangeDiffResponse = { path: row.path, code: row.code, kind: body.kind, truncated: body.truncated, text: body.text };
+  if (row.form === "renamed") response.old_path = row.oldPath;
+  return response;
 }
