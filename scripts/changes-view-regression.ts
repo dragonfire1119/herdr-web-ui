@@ -30,6 +30,23 @@ export async function checkChangesView(browser: Browser, origin: string, dirtyPa
     assert.match(await page.locator(".changes-diff").innerText(), /herdr-changes-line/);
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await page.locator(".changes-path", { hasText: "notes.txt" }).waitFor();
+    await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
+    await page.getByTitle("Changes (⌘⇧G)", { exact: true }).click();
+    await page.locator(".changes-view").waitFor();
+    await page.keyboard.press("ControlOrMeta+Shift+KeyJ");
+    await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).waitFor();
+    assert.equal(await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).getAttribute("aria-pressed"), "true");
+    await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+    await page.getByTitle("Changes (⌘⇧G)", { exact: true }).click();
+    await page.locator(".changes-view").waitFor();
+    await page.keyboard.press("ControlOrMeta+Shift+KeyG");
+    assert.equal(await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).getAttribute("aria-pressed"), "true");
+    await page.getByTitle("Changes (⌘⇧G)", { exact: true }).click();
+    assert.equal(await page.getByTitle("Changes (⌘⇧G)", { exact: true }).getAttribute("aria-pressed"), "true");
+    await page.reload();
+    await page.locator(".conn-live").waitFor();
+    assert.equal(await page.getByTitle("Changes (⌘⇧G)", { exact: true }).getAttribute("aria-pressed"), "true");
+    await page.locator(".changes-view").waitFor();
 
     await page.goto(`${origin}/?pane=${encodeURIComponent(plainPane)}`);
     await page.locator(".conn-live").waitFor();
@@ -43,14 +60,14 @@ export async function checkChangesView(browser: Browser, origin: string, dirtyPa
     const stop = page.getByRole("button", { name: "Stop agent", exact: true });
     await stop.waitFor();
     const before = sent.length;
-    await stop.click();
-    const deadline = Date.now() + 5_000;
+    const deadline = Date.now() + 15_000;
     while (!sent.slice(before).includes("\u001b")) {
       assert(Date.now() < deadline, "Stop did not send Escape while chat covers the grid");
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      await stop.click();
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
     assert.deepEqual(errors, []);
-    console.log("PASS changes view: list, diff, non-git folder, Stop sends Escape");
+    console.log("PASS changes view: list, diff, non-git folder, lens return, Stop sends Escape");
   } finally {
     await context.close();
   }

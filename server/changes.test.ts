@@ -380,6 +380,42 @@ describe("paneChangeDiff", () => {
     }
   });
 
+  it("refuses a filter whose name contains a dot before running it", async () => {
+    const cwd = scratch();
+    const mark = join(cwd, "FILTER-RAN");
+    git(cwd, "init", "-q", "-b", "main");
+    writeFileSync(join(cwd, "file.txt"), "base\n");
+    git(cwd, "add", "--", "file.txt");
+    git(cwd, "commit", "-q", "-m", "base");
+    writeFileSync(join(cwd, "file.txt"), "hack\n");
+    git(cwd, "config", "filter.foo.bar.clean", `touch ${mark}; cat`);
+    mkdirSync(join(cwd, ".git", "info"), { recursive: true });
+    writeFileSync(join(cwd, ".git", "info", "attributes"), "* filter=foo.bar\n");
+    expect(await paneChanges(cwd)).toMatchObject({ error: "git_failed" });
+    expect(existsSync(mark)).toBe(false);
+    expect(await paneChangeDiff(cwd, "file.txt")).toMatchObject({ error: "git_failed" });
+    expect(existsSync(mark)).toBe(false);
+  });
+
+  it("does not run a submodule external diff", async () => {
+    const remote = scratch();
+    git(remote, "init", "-q", "-b", "main");
+    writeFileSync(join(remote, "s.txt"), "sub-base\n");
+    git(remote, "add", "--", "s.txt");
+    git(remote, "commit", "-q", "-m", "base");
+    const parent = scratch();
+    git(parent, "init", "-q", "-b", "main");
+    git(parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", remote, "child");
+    git(parent, "commit", "-q", "-m", "add");
+    writeFileSync(join(parent, "child", "s.txt"), "sub-edit\n");
+    const mark = join(parent, "EXT-RAN");
+    git(join(parent, "child"), "config", "diff.external", `touch ${mark}`);
+    git(parent, "config", "diff.submodule", "diff");
+    const body = diffed(await paneChangeDiff(parent, "child"));
+    expect(existsSync(mark)).toBe(false);
+    expect(body.text).toContain("Subproject commit");
+  });
+
   it("shows the worktree bytes when the checkout configures textconv or a clean filter", async () => {
     const cwd = scratch();
     git(cwd, "init", "-q", "-b", "main");

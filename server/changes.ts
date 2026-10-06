@@ -152,8 +152,10 @@ async function filterPrefix(cwd: string): Promise<string[] | GitFailure> {
   if ("error" in listed) return listed;
   const names = new Set<string>();
   for (const line of new TextDecoder().decode(listed.stdout).split("\n")) {
-    const match = FILTER_COMMAND.exec(line.trim());
-    if (match === null) continue;
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("filter.")) continue;
+    const match = FILTER_COMMAND.exec(trimmed);
+    if (match === null) return { error: "git_failed", message: "git failed" };
     const name = match[1] ?? "";
     if (!SAFE_FILTER_NAME.test(name)) return { error: "git_failed", message: "git failed" };
     names.add(name);
@@ -387,7 +389,7 @@ async function trackedBody(top: string, statusPath: string): Promise<DiffBody | 
   if (typeof source !== "string") return source;
   const run = await runGit(
     top,
-    ["-C", top, "--attr-source", source, "--no-optional-locks", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "-U3", "HEAD", "--", `:(literal)${statusPath}`],
+    ["-c", "diff.submodule=short", "-C", top, "--attr-source", source, "--no-optional-locks", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "-U3", "HEAD", "--", `:(literal)${statusPath}`],
     { stdoutCap: DIFF_CAP },
   );
   if ("error" in run) return run;

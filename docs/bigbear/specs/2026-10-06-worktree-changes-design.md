@@ -119,7 +119,7 @@ Missing `path`, or a decoded path that is empty, absolute, contains a backslash,
 A path that is not a current status path (the new path, for a rename): 404 `not_a_change`, message `path is not an uncommitted file`.
 git missing from `PATH` (`ENOENT` on spawn): 502 `git_unavailable`, message `git is not installed`.
 git killed at 10 seconds: 502 `git_timeout`, message `git timed out`.
-git exits non-zero for any other reason, except "not a git repository" on the list route: 502 `git_failed`. `message` is git's first stderr line, split on `\n`, trimmed, then `slice(0, 200)`. When that is empty, the message is `git failed`.
+git exits non-zero for any other reason, except "not a git repository" on the list route: 502 `git_failed`. `message` is git's first stderr line, split on `\n`, trimmed, then `slice(0, 200)`. When that is empty, the message is `git failed`. When the stderr says `attr-source` is an unknown option or an unrecognized argument, the message is `git 2.43 or newer is required`.
 A status record that is not the porcelain shape below: 502 `git_failed`, message `git failed`. No partial list.
 Unreadable untracked file, or a real path outside the pane folder: 400 `invalid_path`, message `path is invalid`. The body does not contain file bytes.
 
@@ -127,11 +127,11 @@ The list route treats a non-zero exit whose stderr contains `not a git repositor
 
 ## Git
 
-The server runs git itself. No herdr RPC, no pty, no keys sent to the pane. No persistent git process, no connection pool, no status cache. Arguments are an array, never a shell. Every spawn gets the 10 second kill.
+The server runs git itself. No herdr RPC, no pty, no keys sent to the pane. No persistent git process, no connection pool, no status cache. Arguments are an array, never a shell. Every spawn gets the 10 second kill, `--no-pager`, `-c core.fsmonitor=`, and `-c core.hooksPath=/dev/null`. The child environment drops `GIT_DIR`, `GIT_WORK_TREE`, and the other git directory and config overrides. Before each command the server lists config names. A `filter.<name>.clean`, `smudge`, `process`, or `required` key whose name is a single safe segment is blanked with `-c` and `required=false`. Any other `filter.` key fails the request with `git_failed` before status or diff. `core.attributesFile` is set to `/dev/null`. Status and tracked diff also pass `--attr-source` of the empty tree, so checkout attributes do not select a filter. Git older than 2.43 rejects `--attr-source` and the routes return the 2.43 message above.
 
-List command, one process:
+List command:
 
-`git -C <pane folder> --no-optional-locks status --porcelain=v1 -z -uall -- .`
+`git -C <pane folder> --attr-source <empty tree> --no-optional-locks status --porcelain=v1 -z -uall -- .`
 
 The pathspec `.` limits the list to the pane folder. Paths in the output stay relative to the repository root. `--no-optional-locks` skips the optional index update and lets the command fail instead of waiting when a required lock is held. The command does not stage, unstage, commit, checkout, or write the worktree.
 
@@ -146,12 +146,12 @@ The diff route runs that same status command. A not-a-repository exit is `git_fa
 The trimmed stdout is the repository toplevel. Empty stdout is `git_failed`. Diff and untracked reads use the toplevel. They do not join a repository-root path onto the pane folder.
 
 - Code `??`: resolve the path under the toplevel. `realpath` the file and the pane folder. When `realpath` throws, or the file's real path is not the pane folder's real path and is not inside it (a prefix bounded by the platform path separator, not a string prefix of a sibling directory), return `invalid_path` and do not return bytes. Read at most the first 8192 bytes to look for a NUL. A NUL makes `kind: "binary"`, `text: ""`, `truncated: false`, and the rest of the file is not read. Otherwise `kind: "untracked"`. `text` is `--- /dev/null\n+++ b/<path>\n`, then, when the file is not empty, one hunk `@@ -0,0 +1,<N> @@\n` and one `+<line>\n` per line. Lines are `contents.split("\n")`, dropping a single trailing empty piece when the file ends in `\n`. `N` is that count. A zero-byte file has no hunk. Stop reading once `text` exceeds 256 KB and do not read the remainder. Apply the cap below.
-- Any other code, including a submodule or an unmerged path: run `git -C <toplevel> --no-optional-locks diff --no-ext-diff --no-color -U3 HEAD -- <path>`. Exit 0 and zero stdout bytes is `kind: "empty"`, `text: ""`, `truncated: false`. Stdout is `kind: "binary"` and `text: ""` when any line is exactly `GIT binary patch` or starts with `Binary files `. A changed line that merely contains those words is not that marker. Other stdout is `kind: "diff"`. Apply the cap to `text`. `truncated` is true only when the cap cut the text.
+- Any other code, including a submodule or an unmerged path: run `git -c diff.submodule=short -C <toplevel> --attr-source <empty tree> --no-optional-locks diff --no-ext-diff --no-textconv --no-color -U3 HEAD -- :(literal)<path>`. `diff.submodule=short` keeps a submodule diff from recursing into that submodule's `diff.external`. Exit 0 and zero stdout bytes is `kind: "empty"`, `text: ""`, `truncated: false`. Stdout is `kind: "binary"` and `text: ""` when any line is exactly `GIT binary patch` or starts with `Binary files `. A changed line that merely contains those words is not that marker. Other stdout is `kind: "diff"`. Apply the cap to `text`. `truncated` is true only when the cap cut the text.
 - A deleted tracked file has no file to `realpath`. The lexical path check and the status-list check are enough, and the diff command shows the deletion.
 
 A diff longer than 256 KB (`256 * 1024` bytes of UTF-8) is cut at the last newline whose byte offset fits, or at the byte cap when the first line does not fit. That last cut may split a code point. The returned byte length is at most 256 KB. The view shows `Diff cut at 256 KB` when `truncated` is true.
 
-A modified submodule stays one row. The diff is whatever `git diff HEAD` prints for that path. The server does not enter the submodule.
+A modified submodule stays one row. The diff is the short submodule summary, not the files inside it. The server does not enter the submodule.
 
 ## Client
 
