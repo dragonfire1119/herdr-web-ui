@@ -35,10 +35,20 @@ function gitFailedMessage(stderr: string): string {
   return trimmed.length === 0 ? "git failed" : trimmed;
 }
 
-function runGit(cwd: string, args: readonly string[]): Promise<{ stdout: Uint8Array; stderr: string; exitCode: number } | GitFailure> {
+function runGit(
+  cwd: string,
+  args: readonly string[],
+  env?: Record<string, string | undefined>,
+): Promise<{ stdout: Uint8Array; stderr: string; exitCode: number } | GitFailure> {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
-    proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    proc = Bun.spawn(["git", ...args], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      ...(env === undefined ? {} : { env }),
+    });
   } catch (error) {
     if (isEnoent(error)) return Promise.resolve({ error: "git_unavailable", message: "git is not installed" });
     return Promise.resolve({ error: "git_failed", message: "git failed" });
@@ -103,7 +113,12 @@ function parsePorcelain(stdout: Uint8Array): StatusRow[] | GitFailure {
 }
 
 async function statusOf(cwd: string): Promise<StatusRun> {
-  const run = await runGit(cwd, ["-C", cwd, "--no-optional-locks", "status", "--porcelain=v1", "-z", "-uall", "--", "."]);
+  // the missing-checkout test matches English stderr; other git spawns keep the process locale
+  const run = await runGit(
+    cwd,
+    ["-C", cwd, "--no-optional-locks", "status", "--porcelain=v1", "-z", "-uall", "--", "."],
+    { ...process.env, LC_ALL: "C" },
+  );
   if ("error" in run) {
     if (run.error === "git_failed" && run.message.includes("not a git repository")) return { type: "not_repository", failure: run };
     return { type: "failed", failure: run };

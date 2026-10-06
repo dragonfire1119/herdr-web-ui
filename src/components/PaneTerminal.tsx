@@ -135,6 +135,8 @@ export function PaneTerminal({
   const changesView = view === "changes";
   const coversGridRef = useRef(coversGrid);
   coversGridRef.current = coversGrid;
+  // Stop calls term.input while chat covers the grid. That call is synchronous.
+  const allowCoveredInputRef = useRef(false);
   /** read by the wheel handler, which is attached once for the terminal's life */
   const wheelSpeedRef = useRef(terminalWheelSpeed);
   wheelSpeedRef.current = terminalWheelSpeed;
@@ -867,6 +869,8 @@ export function PaneTerminal({
       commandBackspace = false;
       const current = paneRef.current;
       if (!current || observeRef.current || secretRef.current !== null || heldRef.current) return;
+      // a covered lens keeps the pty mounted: keystrokes must not reach it
+      if (coversGridRef.current && !allowCoveredInputRef.current) return;
       let input = data;
       if (ctrlRef.current && isPrintable(data)) {
         ctrlRef.current = false;
@@ -1132,6 +1136,9 @@ export function PaneTerminal({
       const shared = sharedGridRef.current;
       const hidden = termRef.current;
       if (shared && hidden && !observeRef.current && (hidden.cols !== shared.cols || hidden.rows !== shared.rows)) hidden.resize(shared.cols, shared.rows);
+      // Mod+Shift+G does not move focus; the next keys would otherwise reach the agent
+      const textarea = hostRef.current?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+      if (textarea && document.activeElement === textarea) textarea.blur();
       return;
     }
     if (observeRef.current || fixedGridRef.current) return;
@@ -1338,7 +1345,12 @@ export function PaneTerminal({
     const term = termRef.current;
     const socket = socketRef.current;
     if (!term || !socket || !socket.connected) return;
-    term.input("\u001b");
+    allowCoveredInputRef.current = true;
+    try {
+      term.input("\u001b");
+    } finally {
+      allowCoveredInputRef.current = false;
+    }
   }, []);
 
   // While the agent runs, append to its held messages. Each requires an explicit send.
