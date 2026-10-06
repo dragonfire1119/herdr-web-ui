@@ -7,6 +7,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- Each pane can show its uncommitted files beside Chat and Terminal. The list is that
+  folder's git status, and opening a row shows the file's diff against HEAD. A folder
+  that is not a checkout says so. Nothing in this view stages, discards, or commits.
+
 ### Changed
 - The message box follows **Settings → Chat font size**, as the transcript and prompt cards
   already did: with a mouse it is typed at the transcript's size, and on a touch screen it
