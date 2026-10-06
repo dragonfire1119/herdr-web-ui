@@ -118,6 +118,8 @@ export const ZH: Record<string, string> = {
   "Hide workspace list": "隐藏工作区列表",
   "Toggle sidebar (⌘⇧B)": "切换侧边栏 (⌘⇧B)",
   "Chat transcript (⌘⇧J)": "聊天记录 (⌘⇧J)",
+  "Changes": "更改",
+  "Changes (⌘⇧G)": "更改 (⌘⇧G)",
   "Live terminal (⌘⇧J)": "实时终端 (⌘⇧J)",
   "Live terminal: coming to Windows PCs once herdr can attach there": "实时终端：待 herdr 支持在 Windows 上附加终端后开放",
   "soon": "即将",

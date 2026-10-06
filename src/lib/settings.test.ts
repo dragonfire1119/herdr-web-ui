@@ -407,6 +407,7 @@ it("sanitizes input modes and shortcut overrides without accepting arbitrary com
   expect(sanitizeSettings({ terminalInputMode: "bad" }).terminalInputMode).toBe("auto");
   expect(sanitizeSettings({ terminalInputMode: "line" }).terminalInputMode).toBe("line");
   expect(sanitizeSettings({ shortcutOverrides: { palette: "p", settings: null, voice: "x", unknown: "x", "next-pane": "rm -rf" } }).shortcutOverrides).toEqual({ palette: "p", settings: null });
+  expect(sanitizeSettings({ shortcutOverrides: { "show-changes": "h" } }).shortcutOverrides).toEqual({ "show-changes": "h" });
 });
 
 describe("default lens", () => {

@@ -116,6 +116,8 @@ export const JA: Record<string, string> = {
   "Hide workspace list": "ワークスペース一覧を非表示",
   "Toggle sidebar (⌘⇧B)": "サイドバーの切り替え (⌘⇧B)",
   "Chat transcript (⌘⇧J)": "チャット履歴 (⌘⇧J)",
+  "Changes": "変更",
+  "Changes (⌘⇧G)": "変更 (⌘⇧G)",
   "Live terminal (⌘⇧J)": "ライブターミナル (⌘⇧J)",
   "Live terminal: coming to Windows PCs once herdr can attach there": "ライブターミナル: herdr が Windows でアタッチに対応したら使えます",
   "soon": "近日",

@@ -130,8 +130,10 @@ export function PaneTerminal({
   const uploadFileRef = useRef(uploadPaneImage);
   uploadFileRef.current = uploadPaneImage;
   const chatView = view === "chat";
-  const chatViewRef = useRef(chatView);
-  chatViewRef.current = chatView;
+  const coversGrid = view !== "terminal";
+  const changesView = view === "changes";
+  const coversGridRef = useRef(coversGrid);
+  coversGridRef.current = coversGrid;
   /** read by the wheel handler, which is attached once for the terminal's life */
   const wheelSpeedRef = useRef(terminalWheelSpeed);
   wheelSpeedRef.current = terminalWheelSpeed;
@@ -205,7 +207,7 @@ export function PaneTerminal({
     return () => observer.disconnect();
   }, [settings.chatWidth]);
   const directTyping = settings.terminalInputMode === "direct" || (settings.terminalInputMode === "auto" && (!coarse || storedDirectTyping()));
-  const inputLine = !directTyping && !chatView;
+  const inputLine = !directTyping && !coversGrid;
   const inputLineRef = useRef(inputLine);
   inputLineRef.current = inputLine;
   // input typed while disconnected, held for the user to review and send
@@ -753,7 +755,7 @@ export function PaneTerminal({
         setObserving(nowObserving);
         term.options.disableStdin = nowObserving || secretRef.current !== null || heldRef.current;
         onRoleAckRef.current?.(message.mode);
-        if (!nowObserving && !fixedGridRef.current && !chatViewRef.current) {
+        if (!nowObserving && !fixedGridRef.current && !coversGridRef.current) {
           try {
             fit.fit();
           } catch {
@@ -769,11 +771,11 @@ export function PaneTerminal({
         // unless the grid is fixed: then nobody here drives it
         if (message.pane_id !== paneRef.current) return;
         if (message.fixed) fixedGridRef.current = true;
-        // kept while the terminal lens ignores it: another device may drive the grid, and the
-        // chat lens entered later must draw its hidden screen for that grid, not this device's
+        // kept while the terminal lens ignores it: another device may drive the grid, and a
+        // covered lens entered later must draw its hidden screen for that grid, not this device's
         sharedGridRef.current = { cols: message.cols, rows: message.rows };
-        // the chat lens adopts the shared grid too: the screen it reads (a masked prompt) is drawn for it
-        if (!observeRef.current && !fixedGridRef.current && !chatViewRef.current) return;
+        // a covered lens adopts the shared grid too: the screen it reads (a masked prompt) is drawn for it
+        if (!observeRef.current && !fixedGridRef.current && !coversGridRef.current) return;
         if (term.cols !== message.cols || term.rows !== message.rows) term.resize(message.cols, message.rows);
         panned = false;
         followCursor();
@@ -904,7 +906,7 @@ export function PaneTerminal({
         const paths: string[] = [];
         for (const file of files) paths.push(await uploadFileRef.current(pane, file));
         // An upload can finish after the user has switched panes or lost input access.
-        if (paneRef.current !== pane || chatViewRef.current || !socket.connected || term.options.disableStdin) return;
+        if (paneRef.current !== pane || coversGridRef.current || !socket.connected || term.options.disableStdin) return;
         term.paste(paths.map((path) => `'${path.replaceAll("'", "'\\''")}'`).join(" ") + " ");
         term.focus();
       } catch (error) {
@@ -961,9 +963,9 @@ export function PaneTerminal({
           followCursor();
           return;
         }
-        // the chat lens covers the grid: a phone's viewport or keyboard must not resize the
+        // a covered lens hides the grid: a phone's viewport or keyboard must not resize the
         // shared pty under another device (#361); the switch back to the terminal refits
-        if (chatViewRef.current) return;
+        if (coversGridRef.current) return;
         try {
           fit.fit();
         } catch {
@@ -1029,7 +1031,7 @@ export function PaneTerminal({
     // connections never do this: they own no geometry to re-assert.
     const refit = (): void => {
       const current = paneRef.current;
-      if (!current || observeRef.current || fixedGridRef.current || chatViewRef.current) return;
+      if (!current || observeRef.current || fixedGridRef.current || coversGridRef.current) return;
       try {
         fit.fit();
       } catch {
@@ -1105,7 +1107,7 @@ export function PaneTerminal({
       if (term.options.fontSize === terminalFontSize && term.options.fontFamily === fontFamily) return;
       term.options.fontSize = terminalFontSize;
       term.options.fontFamily = fontFamily;
-      if (observeRef.current || fixedGridRef.current || chatViewRef.current) return;
+      if (observeRef.current || fixedGridRef.current || coversGridRef.current) return;
       try {
         fitRef.current?.fit();
       } catch {
@@ -1119,10 +1121,10 @@ export function PaneTerminal({
     return () => { superseded = true; };
   }, [terminalFontSize, fontFamily]);
 
-  // the grid must re-fit when the lens switches back: the chat lens covered it, and a
+  // the grid must re-fit when the lens switches back: a covered lens hid it, and a
   // resize while covered may have been skipped by a zero-size layout
   useEffect(() => {
-    if (chatView) {
+    if (coversGrid) {
       const pane = paneRef.current;
       if (pane) socketRef.current?.keepSize(pane);
       // the grid another device left the pty at while this one showed the terminal
@@ -1141,7 +1143,7 @@ export function PaneTerminal({
     const pane = paneRef.current;
     if (pane && term) socketRef.current?.resize(pane, term.cols, term.rows, true);
     if (!autoSelected && !coarseRef.current) term?.focus();
-  }, [chatView]);
+  }, [coversGrid]);
 
   // Reset synchronously on pane changes: old composition timers must never see the new pane.
   useLayoutEffect(() => {
@@ -1184,10 +1186,10 @@ export function PaneTerminal({
     } catch {
       /* not laid out yet; the ResizeObserver will follow up */
     }
-    socket.attach(paneId, term.cols, term.rows, chatViewRef.current);
-    // the chat lens covers the grid and its composer takes the keyboard: focusing the hidden
-    // grid sent the keys straight to the pane, and showed a phone's IME text mid-screen
-    if (!chatViewRef.current && !autoSelected && !coarseRef.current) term.focus();
+    socket.attach(paneId, term.cols, term.rows, coversGridRef.current);
+    // a covered lens hides the grid: focusing it sent the keys straight to the pane, and
+    // showed a phone's IME text mid-screen. The chat composer takes the keyboard there.
+    if (!coversGridRef.current && !autoSelected && !coarseRef.current) term.focus();
     return () => {
       socket.detach(paneId);
     };
@@ -1200,7 +1202,7 @@ export function PaneTerminal({
   useEffect(() => {
     const wasAuto = autoSelectedRef.current;
     autoSelectedRef.current = autoSelected;
-    if (wasAuto && !autoSelected && !chatViewRef.current && !coarseRef.current) termRef.current?.focus();
+    if (wasAuto && !autoSelected && !coversGridRef.current && !coarseRef.current) termRef.current?.focus();
   }, [autoSelected]);
 
   // key-bar taps go through xterm so the onData -> socket path above is reused
@@ -1325,9 +1327,9 @@ export function PaneTerminal({
       if (document.activeElement === textarea) textarea.blur();
     } else {
       textarea.removeAttribute("inputmode");
-      if (coarse && !chatView && turnedOn) termRef.current?.focus();
+      if (coarse && !coversGrid && turnedOn) termRef.current?.focus();
     }
-  }, [inputLine, coarse, chatView, directTyping, paneId]);
+  }, [inputLine, coarse, coversGrid, directTyping, paneId]);
 
   // the composer's stop button: Escape interrupts the agent's current turn in every
   // supported TUI (Claude Code, omp, codex) without killing the process the way ^C would
@@ -1460,7 +1462,7 @@ export function PaneTerminal({
 
   return (
     // data-direct-typing: xterm's own field raises the soft keyboard here (lib/viewport.ts)
-    <div ref={stackRef} className={`terminal-stack${chatView ? " is-chat" : ""}${greeted ? " is-greeted" : ""}`} data-direct-typing={coarse && directTyping && !chatView ? "" : undefined}>
+    <div ref={stackRef} className={`terminal-stack${coversGrid ? " covers-grid" : ""}${chatView ? " is-chat" : ""}${changesView ? " is-changes" : ""}${greeted ? " is-greeted" : ""}`} data-direct-typing={coarse && directTyping && !coversGrid ? "" : undefined}>
       {paneId === null && restoreError !== null && (
         <div className="terminal-placeholder is-restore-error" role="status">
           <div className="terminal-placeholder-inner">
@@ -1491,7 +1493,7 @@ export function PaneTerminal({
             )}
           </div>
         )}
-        {paneId !== null && !chatView && unsupported && (
+        {paneId !== null && !coversGrid && unsupported && (
           <div className="terminal-banner terminal-banner-soon" role="status">
             <span>{t("Live terminal is coming to Windows PCs: herdr cannot attach a terminal there yet. The chat lens works now.")}</span>
           </div>
@@ -1502,15 +1504,15 @@ export function PaneTerminal({
             <a className="btn" href={`?machine=${encodeURIComponent(machineId)}&pane=${encodeURIComponent(paneId)}`}>{t("Reconnect")}</a>
           </div>
         )}
-        {!chatView && inputError && <div className="terminal-banner" role="status">{inputError}<button className="btn" onClick={() => setInputError(null)}>{t("Dismiss")}</button></div>}
-        {!chatView && !observing && connected && !inputReady && !held && !ended && <div className="terminal-banner" role="status">{t("Waiting for terminal input…")}</div>}
+        {!coversGrid && inputError && <div className="terminal-banner" role="status">{inputError}<button className="btn" onClick={() => setInputError(null)}>{t("Dismiss")}</button></div>}
+        {!coversGrid && !observing && connected && !inputReady && !held && !ended && <div className="terminal-banner" role="status">{t("Waiting for terminal input…")}</div>}
         {/* the chat lens says these itself (ChatView), inline; the pills are the grid's */}
-        {paneId !== null && !chatView && ended && !outputError && (
+        {paneId !== null && !coversGrid && ended && !outputError && (
           <div className="terminal-banner" role="status">
             terminal ended{!draftIsEmpty(draft) ? " — held input discarded" : ""}
           </div>
         )}
-        {paneId !== null && !chatView && !ended && !connected && (
+        {paneId !== null && !coversGrid && !ended && !connected && (
           <div className="terminal-banner terminal-banner-warning" role="status">
             reconnecting to herdr web ui…
             {!draftIsEmpty(draft) && <span className="draft-held"> input held: “{draft.text}”</span>}
@@ -1688,7 +1690,7 @@ export function PaneTerminal({
         />
       )}
       {paneId !== null && !secretActive && !observing && !ended && inputLine && <TerminalInput key={paneId} owner={paneStorageId(machineId, paneId)} onComposing={setComposing} connected={connected && !held} onSend={sendTerminalLine} onEnter={pressEnter} />}
-      {paneId !== null && !secretActive && !observing && !chatView && <KeyBar disabled={composing} onKey={pressKey} ctrlArmed={ctrlArmed} onToggleCtrl={toggleCtrl}
+      {paneId !== null && !secretActive && !observing && !coversGrid && <KeyBar disabled={composing} onKey={pressKey} ctrlArmed={ctrlArmed} onToggleCtrl={toggleCtrl}
         altArmed={altArmed} onToggleAlt={toggleAlt} extras={settings.keyBarExtras}
         {...(coarse ? { directTyping, onToggleDirect: toggleDirect } : {})} />}
     </div>

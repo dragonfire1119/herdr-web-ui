@@ -297,3 +297,7 @@
 .terminal-stack.is-chat .pane-terminal {
   content-visibility: hidden;
 }
+
+.terminal-stack.covers-grid .pane-terminal {
+  content-visibility: hidden;
+}

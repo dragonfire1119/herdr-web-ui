@@ -114,6 +114,8 @@ export const KO: Record<string, string> = {
   "Hide workspace list": "워크스페이스 목록 숨기기",
   "Toggle sidebar (⌘⇧B)": "사이드바 토글 (⌘⇧B)",
   "Chat transcript (⌘⇧J)": "채팅 기록 (⌘⇧J)",
+  "Changes": "변경 사항",
+  "Changes (⌘⇧G)": "변경 사항 (⌘⇧G)",
   "Live terminal (⌘⇧J)": "실시간 터미널 (⌘⇧J)",
   "Live terminal: coming to Windows PCs once herdr can attach there": "실시간 터미널: herdr가 Windows에서 attach를 지원하면 열립니다",
   "soon": "준비 중",
