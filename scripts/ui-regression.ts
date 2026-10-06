@@ -20,6 +20,7 @@ import { checkMobileViewport } from "./mobile-viewport-regression.ts";
 import { checkMobileTabs } from "./mobile-tabs-regression.ts";
 import { checkTerminalFileInput } from "./terminal-file-input-regression.ts";
 import { checkTerminalInput } from "./terminal-input-regression.ts";
+import { checkChangesView } from "./changes-view-regression.ts";
 import { checkDefaultView } from "./default-view-regression.ts";
 import { checkComposerReconnect } from "./composer-reconnect-regression.ts";
 import { checkDroplet } from "./droplet-regression.ts";
@@ -65,6 +66,16 @@ try {
     panes.push(result.root_pane.pane_id);
   }
   const [paneA, paneB] = panes as [string, string];
+  const changesDir = join(root, "changes");
+  const plainDir = join(root, "plain");
+  mkdirSync(changesDir);
+  mkdirSync(plainDir);
+  const changesInit = Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd: changesDir });
+  if (changesInit.exitCode !== 0) throw new Error(changesInit.stderr.toString());
+  writeFileSync(join(changesDir, "notes.txt"), "herdr-changes-line\n");
+  const changesWorkspace = await workspaceCreate({ cwd: changesDir, label: "herdr-web-ui-test-browser-changes" });
+  const plainWorkspace = await workspaceCreate({ cwd: plainDir, label: "herdr-web-ui-test-browser-plain" });
+  workspaces.push(changesWorkspace.workspace.workspace_id, plainWorkspace.workspace.workspace_id);
   // no provider is asked with the test machine's own sign-ins
   server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "push"), usage: new UsageService(undefined, []) });
   const origin = `http://127.0.0.1:${server.port}`;
@@ -1086,6 +1097,7 @@ try {
   console.log("PASS a phone offers Claude's suggestion as a chip only once Settings turns it on");
 
   await checkTerminalInput(browser, origin, paneA, paneB);
+  await checkChangesView(browser, origin, changesWorkspace.root_pane.pane_id, plainWorkspace.root_pane.pane_id);
 
   // the terminal lens on a touch screen: an input line sends whole lines; the grid raises no keyboard
   const touch = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });

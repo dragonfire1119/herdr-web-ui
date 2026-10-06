@@ -25,6 +25,27 @@ type StatusRun =
   | { type: "failed"; failure: GitFailure };
 
 const GIT_KILL_MS = 10_000;
+const BLOCKED_GIT_ENV = new Set([
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_CONFIG_PARAMETERS",
+  "GIT_CONFIG_COUNT",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_NAMESPACE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_COMMON_DIR",
+]);
+const emptyTrees = new Map<string, string>();
+
+function childEnv(extra?: Record<string, string | undefined>): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...process.env, ...extra };
+  for (const key of Object.keys(env)) {
+    if (BLOCKED_GIT_ENV.has(key) || key.startsWith("GIT_CONFIG_KEY_") || key.startsWith("GIT_CONFIG_VALUE_")) delete env[key];
+  }
+  return env;
+}
 
 function isEnoent(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT";
@@ -83,12 +104,12 @@ function runGit(
 ): Promise<GitRun | GitFailure> {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
-    proc = Bun.spawn(["git", ...args], {
+    proc = Bun.spawn(["git", "-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", ...args], {
       cwd,
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
-      ...(options?.env === undefined ? {} : { env: options.env }),
+      env: childEnv(options?.env),
     });
   } catch (error) {
     if (isEnoent(error)) return Promise.resolve({ error: "git_unavailable", message: "git is not installed" });
@@ -154,11 +175,24 @@ function parsePorcelain(stdout: Uint8Array): StatusRow[] | GitFailure {
   return rows;
 }
 
+async function emptyTree(cwd: string): Promise<string | GitFailure> {
+  const cached = emptyTrees.get(cwd);
+  if (cached !== undefined) return cached;
+  const hashed = await runGit(cwd, ["-C", cwd, "hash-object", "-t", "tree", "--stdin"]);
+  if ("error" in hashed) return hashed;
+  const source = new TextDecoder().decode(hashed.stdout).trim();
+  if (!/^[0-9a-f]{40,64}$/i.test(source)) return { error: "git_failed", message: "git failed" };
+  emptyTrees.set(cwd, source);
+  return source;
+}
+
 async function statusOf(cwd: string): Promise<StatusRun> {
+  const source = await emptyTree(cwd);
+  if (typeof source !== "string") return { type: "failed", failure: source };
   const englishStatusStderr = { ...process.env, LC_ALL: "C" };
   const run = await runGit(
     cwd,
-    ["-C", cwd, "--no-optional-locks", "status", "--porcelain=v1", "-z", "-uall", "--", "."],
+    ["-C", cwd, "--attr-source", source, "--no-optional-locks", "status", "--porcelain=v1", "-z", "-uall", "--", "."],
     { env: englishStatusStderr },
   );
   if ("error" in run) {
@@ -212,8 +246,6 @@ function capDiffText(text: string, overflow = false): { text: string; truncated:
   return { text: decoded, truncated: true };
 }
 
-const LOCAL_DIFF_COMMAND = /^(?:filter\..*\.(?:clean|smudge)|diff\..*\.(?:textconv|command))$/;
-
 async function repositoryBound(cwd: string): Promise<{ top: string } | GitFailure> {
   const failed: GitFailure = { error: "git_failed", message: "git failed" };
   const run = await runGit(cwd, ["-C", cwd, "--no-optional-locks", "rev-parse", "--show-toplevel", "--absolute-git-dir"]);
@@ -252,23 +284,6 @@ async function repositoryBound(cwd: string): Promise<{ top: string } | GitFailur
     return failed;
   }
   return { top };
-}
-
-async function diffAttributeSource(cwd: string): Promise<{ source?: string } | GitFailure> {
-  const listed = await runGit(
-    cwd,
-    ["-C", cwd, "config", "--local", "--get-regexp", "^(filter\\..*\\.(clean|smudge)|diff\\..*\\.(textconv|command))$"],
-    { acceptExit: [1] },
-  );
-  if ("error" in listed) return listed;
-  const keys = new TextDecoder().decode(listed.stdout).split("\n").map((line) => line.split(" ", 1)[0] ?? "").filter((key) => key.length > 0);
-  if (keys.length === 0) return {};
-  if (keys.some((key) => !LOCAL_DIFF_COMMAND.test(key))) return { error: "git_failed", message: "git failed" };
-  const hashed = await runGit(cwd, ["-C", cwd, "hash-object", "-t", "tree", "--stdin"]);
-  if ("error" in hashed) return hashed;
-  const source = new TextDecoder().decode(hashed.stdout).trim();
-  if (!/^[0-9a-f]{40,64}$/i.test(source)) return { error: "git_failed", message: "git failed" };
-  return { source };
 }
 
 function insideFolder(fileReal: string, folderReal: string): boolean {
@@ -327,12 +342,13 @@ async function untrackedBody(top: string, paneFolder: string, statusPath: string
 }
 
 async function trackedBody(top: string, statusPath: string): Promise<DiffBody | GitFailure> {
-  const attributes = await diffAttributeSource(top);
-  if ("error" in attributes) return attributes;
-  const args = ["-C", top, "--no-optional-locks"];
-  if (attributes.source !== undefined) args.push("--attr-source", attributes.source);
-  args.push("diff", "--no-ext-diff", "--no-textconv", "--no-color", "-U3", "HEAD", "--", `:(literal)${statusPath}`);
-  const run = await runGit(top, args, { stdoutCap: DIFF_CAP });
+  const source = await emptyTree(top);
+  if (typeof source !== "string") return source;
+  const run = await runGit(
+    top,
+    ["-C", top, "--attr-source", source, "--no-optional-locks", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "-U3", "HEAD", "--", `:(literal)${statusPath}`],
+    { stdoutCap: DIFF_CAP },
+  );
   if ("error" in run) return run;
   const text = new TextDecoder().decode(run.stdout);
   if (run.stdout.length === 0 && !run.capped) return { kind: "empty", text: "", truncated: false };

@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { paneChangeDiff, paneChanges, type ChangeDiffResult, type ChangesResult } from "./changes.ts";
@@ -312,6 +312,43 @@ describe("paneChangeDiff", () => {
     const body = diffed(await paneChangeDiff(cwd, ":(top)*"));
     expect(body.text).toContain("MAGIC-NEXT");
     expect(body.text).not.toContain("OTHER-SECRET");
+  });
+
+  it("ignores GIT_DIR and does not run a checkout fsmonitor or process filter", async () => {
+    const victim = scratch();
+    git(victim, "init", "-q", "-b", "main");
+    writeFileSync(join(victim, "secret.txt"), "secret-base-line\n");
+    git(victim, "add", "--", "secret.txt");
+    git(victim, "commit", "-q", "-m", "base");
+    const cwd = scratch();
+    git(cwd, "init", "-q", "-b", "main");
+    writeFileSync(join(cwd, "file.txt"), "base\n");
+    git(cwd, "add", "--", "file.txt");
+    git(cwd, "commit", "-q", "-m", "base");
+    writeFileSync(join(cwd, "file.txt"), "changed-line\n");
+    writeFileSync(join(cwd, ".gitattributes"), "* filter=evil\n");
+    const fsRan = join(cwd, "FS-RAN");
+    const processRan = join(cwd, "PROCESS-RAN");
+    git(cwd, "config", "core.fsmonitor", `touch ${fsRan}`);
+    git(cwd, "config", "filter.evil.process", `touch ${processRan}`);
+    git(cwd, "config", "filter.evil.clean", `touch ${join(cwd, "CLEAN-RAN")}`);
+    const previousDir = process.env.GIT_DIR;
+    const previousWork = process.env.GIT_WORK_TREE;
+    process.env.GIT_DIR = join(victim, ".git");
+    process.env.GIT_WORK_TREE = victim;
+    try {
+      const body = diffed(await paneChangeDiff(cwd, "file.txt"));
+      expect(body.text).toContain("changed-line");
+      expect(body.text).not.toContain("secret-base-line");
+      expect(existsSync(fsRan)).toBe(false);
+      expect(existsSync(processRan)).toBe(false);
+      expect(existsSync(join(cwd, "CLEAN-RAN"))).toBe(false);
+    } finally {
+      if (previousDir === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = previousDir;
+      if (previousWork === undefined) delete process.env.GIT_WORK_TREE;
+      else process.env.GIT_WORK_TREE = previousWork;
+    }
   });
 
   it("shows the worktree bytes when the checkout configures textconv or a clean filter", async () => {
