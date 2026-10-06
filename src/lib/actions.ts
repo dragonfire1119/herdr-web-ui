@@ -4,7 +4,9 @@
  * keyboard shortcut, a palette row and a sidebar button all run the same code.
  */
 
-export type PaneView = "chat" | "terminal";
+import type { PaneView } from "./paneLens.ts";
+
+export type { PaneView };
 
 export interface AppActions {
   selectPane: (paneId: string) => void;

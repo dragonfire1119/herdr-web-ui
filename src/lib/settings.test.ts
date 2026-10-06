@@ -414,6 +414,7 @@ describe("default lens", () => {
     expect(DEFAULT_SETTINGS.defaultView).toBe("auto");
     expect(sanitizeSettings({ defaultView: "chat" }).defaultView).toBe("chat");
     expect(sanitizeSettings({ defaultView: "split" }).defaultView).toBe("auto");
+    expect(sanitizeSettings({ defaultView: "changes" }).defaultView).toBe("auto");
   });
   it("forgets every pane's own lens and nothing else", () => {
     const data = new Map<string, string>([["herdr-web-ui:view:local:w1:p1", "terminal"], ["herdr-web-ui:view:remote:pc:w2:p1", "chat"], ["herdr-web-ui:settings", "{}"]]);
