@@ -66,7 +66,7 @@ Colors reuse the chat diff tokens. No new color token. Component CSS is colocate
 
 ## API
 
-Both routes are GET. They use the same auth as `/api/pane/files`: the existing `/api/*` gate, including 401 `unauthorized`, and a watch-role device that may call `/api/pane/files` may call these. They do not require `x-herdr-machine` or `x-herdr-update`. They take `pane_id`, a non-empty string, the same parameter `/api/pane/files` accepts. There is no integer query parameter. Shapes live in `shared/protocol.ts`. Error bodies use `server/http.ts` only. Handlers are registered beside `/api/pane/files`, before the `/api/*` 404.
+Both routes are GET. They use the same auth as `/api/pane/files`: the existing `/api/*` gate, including 401 `unauthorized`. A watch-role device that may call `/api/pane/files` may call the list. The diff is file contents, so that role gets the same `read_only` refusal as `/api/fs/`. They do not require `x-herdr-machine` or `x-herdr-update`. They take `pane_id`, a non-empty string, the same parameter `/api/pane/files` accepts. There is no integer query parameter. Shapes live in `shared/protocol.ts`. Error bodies use `server/http.ts` only. Handlers are registered beside `/api/pane/files`, before the `/api/*` 404.
 
 `MACHINE_PROXY_PATH` includes `pane/changes` and `pane/changes/diff`, and does not include a longer path under them. The local `/api/machines/local/` alias already allows the `pane/` prefix. The remote proxy's existing 75 second fetch timeout stays.
 

@@ -1045,7 +1045,7 @@ export function createServer(
       // drops it before forwarding: `/api/machines/<id>//fs/file` would pass as not a file read.
       if (pathname.startsWith("/api/") && pathname.includes("//")) return jsonResponse({ error: { code: "not_found", message: "not found" } }, 404);
       // Watching a terminal grants no arbitrary filesystem access: those files include credentials.
-      const fileRead = /^\/api\/(?:machines\/[^/]+\/)?fs\//.test(pathname);
+      const fileRead = /^\/api\/(?:machines\/[^/]+\/)?(?:fs\/|pane\/changes\/diff$)/.test(pathname);
       const ownPreferences = pathname === "/api/auth" || pathname === "/api/push/subscribe" || pathname === "/api/push/test";
       if (readOnly && (fileRead || mutating && !ownPreferences)) {
         return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);

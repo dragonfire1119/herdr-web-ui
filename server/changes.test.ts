@@ -274,6 +274,107 @@ describe("paneChangeDiff", () => {
     expect(JSON.stringify(result)).not.toContain("TOP-SECRET-BYTES");
   });
 
+  it("does not hang on an untracked fifo and does not treat it as text", async () => {
+    const cwd = scratch();
+    git(cwd, "init", "-q", "-b", "main");
+    const made = Bun.spawnSync(["mkfifo", join(cwd, "pipe")]);
+    expect(made.exitCode).toBe(0);
+    symlinkSync("pipe", join(cwd, "link"));
+    const started = Date.now();
+    const result = await paneChangeDiff(cwd, "link");
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(result).toMatchObject({ kind: "binary", text: "", truncated: false });
+  });
+
+  it("diffs a literal star path without including another dirty file", async () => {
+    const cwd = scratch();
+    git(cwd, "init", "-q", "-b", "main");
+    writeFileSync(join(cwd, "*"), "STAR-ONLY\n");
+    writeFileSync(join(cwd, "other.txt"), "OTHER-SECRET\n");
+    git(cwd, "add", "--", "*", "other.txt");
+    git(cwd, "commit", "-q", "-m", "base");
+    writeFileSync(join(cwd, "*"), "STAR-NEXT\n");
+    writeFileSync(join(cwd, "other.txt"), "OTHER-SECRET-NEXT\n");
+    const body = diffed(await paneChangeDiff(cwd, "*"));
+    expect(body.text).toContain("STAR-NEXT");
+    expect(body.text).not.toContain("OTHER-SECRET");
+  });
+
+  it("diffs a path that is itself a magic pathspec without including another file", async () => {
+    const cwd = scratch();
+    git(cwd, "init", "-q", "-b", "main");
+    writeFileSync(join(cwd, ":(top)*"), "MAGIC-ONLY\n");
+    writeFileSync(join(cwd, "other.txt"), "OTHER-SECRET\n");
+    git(cwd, "add", "--", ":(top)*", "other.txt");
+    git(cwd, "commit", "-q", "-m", "base");
+    writeFileSync(join(cwd, ":(top)*"), "MAGIC-NEXT\n");
+    writeFileSync(join(cwd, "other.txt"), "OTHER-SECRET-NEXT\n");
+    const body = diffed(await paneChangeDiff(cwd, ":(top)*"));
+    expect(body.text).toContain("MAGIC-NEXT");
+    expect(body.text).not.toContain("OTHER-SECRET");
+  });
+
+  it("shows the worktree bytes when the checkout configures textconv or a clean filter", async () => {
+    const cwd = scratch();
+    git(cwd, "init", "-q", "-b", "main");
+    writeFileSync(join(cwd, "file.txt"), "base\n");
+    git(cwd, "add", "--", "file.txt");
+    git(cwd, "commit", "-q", "-m", "base");
+    writeFileSync(join(cwd, "file.txt"), "changed-line\n");
+    writeFileSync(join(cwd, ".gitattributes"), "* diff=evil\n* filter=evil\n");
+    git(cwd, "config", "diff.evil.textconv", "echo TEXTCONV-SECRET");
+    git(cwd, "config", "filter.evil.clean", "echo CLEAN-SECRET");
+    git(cwd, "config", "filter.evil.smudge", "cat");
+    const body = diffed(await paneChangeDiff(cwd, "file.txt"));
+    expect(body.text).toContain("changed-line");
+    expect(body.text).not.toContain("TEXTCONV-SECRET");
+    expect(body.text).not.toContain("CLEAN-SECRET");
+  });
+
+  it("does not list or diff a pane whose git dir is another checkout", async () => {
+    const victim = scratch();
+    git(victim, "init", "-q", "-b", "main");
+    writeFileSync(join(victim, "secret.txt"), "secret-base-line\n");
+    git(victim, "add", "--", "secret.txt");
+    git(victim, "commit", "-q", "-m", "base");
+    const pane = scratch();
+    writeFileSync(join(pane, ".git"), `gitdir: ${victim}/.git\n`);
+    const listedResult = await paneChanges(pane);
+    expect(listedResult).toMatchObject({ error: "git_failed" });
+    expect(JSON.stringify(listedResult)).not.toContain("secret-base-line");
+    expect(JSON.stringify(listedResult)).not.toContain("secret.txt");
+    const diffResult = await paneChangeDiff(pane, "secret.txt");
+    expect(diffResult).toMatchObject({ error: "git_failed" });
+    expect(JSON.stringify(diffResult)).not.toContain("secret-base-line");
+  });
+
+  it("diffs a linked worktree and a submodule", async () => {
+    const parent = scratch();
+    const main = join(parent, "main");
+    const linked = join(parent, "linked");
+    mkdirSync(main);
+    git(main, "init", "-q", "-b", "main");
+    writeFileSync(join(main, "a.txt"), "base\n");
+    git(main, "add", "--", "a.txt");
+    git(main, "commit", "-q", "-m", "base");
+    git(main, "worktree", "add", "-q", "-b", "feature", linked);
+    writeFileSync(join(linked, "a.txt"), "linked-edit\n");
+    const linkedBody = diffed(await paneChangeDiff(linked, "a.txt"));
+    expect(linkedBody.text).toContain("linked-edit");
+
+    const remote = scratch();
+    git(remote, "init", "-q", "-b", "main");
+    writeFileSync(join(remote, "s.txt"), "sub-base\n");
+    git(remote, "add", "--", "s.txt");
+    git(remote, "commit", "-q", "-m", "base");
+    const superproject = scratch();
+    git(superproject, "init", "-q", "-b", "main");
+    git(superproject, "-c", "protocol.file.allow=always", "submodule", "add", "-q", remote, "child");
+    writeFileSync(join(superproject, "child", "s.txt"), "sub-edit\n");
+    const subBody = diffed(await paneChangeDiff(join(superproject, "child"), "s.txt"));
+    expect(subBody.text).toContain("sub-edit");
+  });
+
   it("copies old_path onto a rename diff", async () => {
     const cwd = scratch();
     git(cwd, "init", "-q", "-b", "main");

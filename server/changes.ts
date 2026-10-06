@@ -1,5 +1,6 @@
-import { open, realpath } from "node:fs/promises";
-import { isAbsolute, join, sep } from "node:path";
+import { constants } from "node:fs";
+import { open, readFile, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { ChangeDiffResponse, ChangeEntry, ChangesResponse } from "../shared/protocol.ts";
 
 export type GitErrorCode = "git_unavailable" | "git_timeout" | "git_failed";
@@ -35,11 +36,51 @@ function gitFailedMessage(stderr: string): string {
   return trimmed.length === 0 ? "git failed" : trimmed;
 }
 
+type GitRun = { stdout: Uint8Array; stderr: string; exitCode: number; capped: boolean };
+
+async function takeStdout(stream: ReadableStream<Uint8Array>, cap: number | undefined, stop: () => void): Promise<{ bytes: Uint8Array; capped: boolean }> {
+  if (cap === undefined) {
+    const buf = await new Response(stream).arrayBuffer();
+    return { bytes: new Uint8Array(buf), capped: false };
+  }
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let capped = false;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      const value = next.value;
+      if (value.byteLength === 0) continue;
+      if (total + value.byteLength > cap) {
+        const room = cap - total;
+        if (room > 0) chunks.push(value.subarray(0, room));
+        total = cap;
+        capped = true;
+        stop();
+        break;
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { bytes, capped };
+}
+
 function runGit(
   cwd: string,
   args: readonly string[],
-  env?: Record<string, string | undefined>,
-): Promise<{ stdout: Uint8Array; stderr: string; exitCode: number } | GitFailure> {
+  options?: { env?: Record<string, string | undefined>; stdoutCap?: number; acceptExit?: readonly number[] },
+): Promise<GitRun | GitFailure> {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
     proc = Bun.spawn(["git", ...args], {
@@ -47,7 +88,7 @@ function runGit(
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",
-      ...(env === undefined ? {} : { env }),
+      ...(options?.env === undefined ? {} : { env: options.env }),
     });
   } catch (error) {
     if (isEnoent(error)) return Promise.resolve({ error: "git_unavailable", message: "git is not installed" });
@@ -60,14 +101,15 @@ function runGit(
   }, GIT_KILL_MS);
   return (async () => {
     try {
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout as ReadableStream<Uint8Array>).arrayBuffer(),
+      const [taken, stderr, exitCode] = await Promise.all([
+        takeStdout(proc.stdout as ReadableStream<Uint8Array>, options?.stdoutCap, () => proc.kill()),
         new Response(proc.stderr as ReadableStream<Uint8Array>).text(),
         proc.exited,
       ]);
       if (timedOut) return { error: "git_timeout", message: "git timed out" };
-      if (exitCode !== 0) return { error: "git_failed", message: gitFailedMessage(stderr) };
-      return { stdout: new Uint8Array(stdout), stderr, exitCode };
+      if (taken.capped) return { stdout: taken.bytes, stderr, exitCode, capped: true };
+      if (exitCode !== 0 && !(options?.acceptExit?.includes(exitCode) ?? false)) return { error: "git_failed", message: gitFailedMessage(stderr) };
+      return { stdout: taken.bytes, stderr, exitCode, capped: false };
     } catch (error) {
       if (timedOut) return { error: "git_timeout", message: "git timed out" };
       if (isEnoent(error)) return { error: "git_unavailable", message: "git is not installed" };
@@ -117,7 +159,7 @@ async function statusOf(cwd: string): Promise<StatusRun> {
   const run = await runGit(
     cwd,
     ["-C", cwd, "--no-optional-locks", "status", "--porcelain=v1", "-z", "-uall", "--", "."],
-    englishStatusStderr,
+    { env: englishStatusStderr },
   );
   if ("error" in run) {
     if (run.error === "git_failed" && run.message.includes("not a git repository")) return { type: "not_repository", failure: run };
@@ -137,6 +179,8 @@ export async function paneChanges(cwd: string): Promise<ChangesResult> {
   const run = await statusOf(cwd);
   if (run.type === "not_repository") return { git: false, changes: [] };
   if (run.type === "failed") return run.failure;
+  const bound = await repositoryBound(cwd);
+  if ("error" in bound) return bound;
   const changes = run.rows.map(toEntry);
   changes.sort((left, right) => left.path.localeCompare(right.path));
   return { git: true, changes };
@@ -156,23 +200,75 @@ function lexicalChangePath(path: string): boolean {
   return path.split("/").every((segment) => segment.length > 0 && segment !== "..");
 }
 
-function capDiffText(text: string): { text: string; truncated: boolean } {
+function capDiffText(text: string, overflow = false): { text: string; truncated: boolean } {
   const bytes = new TextEncoder().encode(text);
-  if (bytes.byteLength <= DIFF_CAP) return { text, truncated: false };
+  if (bytes.byteLength <= DIFF_CAP && !overflow) return { text, truncated: false };
   let lastNl = -1;
-  for (let i = 0; i < DIFF_CAP; i++) if (bytes[i] === 0x0a) lastNl = i;
-  const cut = lastNl >= 0 ? lastNl + 1 : DIFF_CAP;
+  const limit = Math.min(bytes.byteLength, DIFF_CAP);
+  for (let i = 0; i < limit; i++) if (bytes[i] === 0x0a) lastNl = i;
+  const cut = lastNl >= 0 ? lastNl + 1 : limit;
   let decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(0, cut), { stream: true });
   while (new TextEncoder().encode(decoded).byteLength > DIFF_CAP) decoded = decoded.slice(0, -1);
   return { text: decoded, truncated: true };
 }
 
-async function repositoryTop(cwd: string): Promise<{ top: string } | GitFailure> {
-  const run = await runGit(cwd, ["-C", cwd, "--no-optional-locks", "rev-parse", "--show-toplevel"]);
+const LOCAL_DIFF_COMMAND = /^(?:filter\..*\.(?:clean|smudge)|diff\..*\.(?:textconv|command))$/;
+
+async function repositoryBound(cwd: string): Promise<{ top: string } | GitFailure> {
+  const failed: GitFailure = { error: "git_failed", message: "git failed" };
+  const run = await runGit(cwd, ["-C", cwd, "--no-optional-locks", "rev-parse", "--show-toplevel", "--absolute-git-dir"]);
   if ("error" in run) return run;
-  const top = new TextDecoder().decode(run.stdout).trim();
-  if (top.length === 0) return { error: "git_failed", message: "git failed" };
+  const [top, gitDir] = new TextDecoder().decode(run.stdout).trim().split("\n");
+  if (top === undefined || gitDir === undefined || top.length === 0 || gitDir.length === 0) return failed;
+  let topReal: string;
+  let gitReal: string;
+  try {
+    topReal = await realpath(top);
+    gitReal = await realpath(gitDir);
+  } catch {
+    return failed;
+  }
+  if (basename(gitReal) === ".git") {
+    const owner = await realpath(dirname(gitReal));
+    if (owner !== topReal) return failed;
+    return { top };
+  }
+  try {
+    const pointed = (await readFile(join(gitReal, "gitdir"), "utf8")).trim();
+    if (pointed.length > 0 && pointed.length <= 4096) {
+      const pointedReal = await realpath(pointed);
+      const dotGit = await realpath(join(topReal, ".git"));
+      if (pointedReal === dotGit) return { top };
+    }
+  } catch { /* submodule git dirs have no back-pointer file */ }
+  const work = await runGit(cwd, ["-C", cwd, "config", "--get", "core.worktree"], { acceptExit: [1] });
+  if ("error" in work) return work;
+  const rel = new TextDecoder().decode(work.stdout).trim();
+  if (rel.length === 0 || rel.length > 4096) return failed;
+  try {
+    const workReal = await realpath(resolve(gitReal, rel));
+    if (workReal !== topReal) return failed;
+  } catch {
+    return failed;
+  }
   return { top };
+}
+
+async function diffAttributeSource(cwd: string): Promise<{ source?: string } | GitFailure> {
+  const listed = await runGit(
+    cwd,
+    ["-C", cwd, "config", "--local", "--get-regexp", "^(filter\\..*\\.(clean|smudge)|diff\\..*\\.(textconv|command))$"],
+    { acceptExit: [1] },
+  );
+  if ("error" in listed) return listed;
+  const keys = new TextDecoder().decode(listed.stdout).split("\n").map((line) => line.split(" ", 1)[0] ?? "").filter((key) => key.length > 0);
+  if (keys.length === 0) return {};
+  if (keys.some((key) => !LOCAL_DIFF_COMMAND.test(key))) return { error: "git_failed", message: "git failed" };
+  const hashed = await runGit(cwd, ["-C", cwd, "hash-object", "-t", "tree", "--stdin"]);
+  if ("error" in hashed) return hashed;
+  const source = new TextDecoder().decode(hashed.stdout).trim();
+  if (!/^[0-9a-f]{40,64}$/i.test(source)) return { error: "git_failed", message: "git failed" };
+  return { source };
 }
 
 function insideFolder(fileReal: string, folderReal: string): boolean {
@@ -201,11 +297,13 @@ async function untrackedBody(top: string, paneFolder: string, statusPath: string
   if (!insideFolder(fileReal, folderReal)) return invalid;
   let fh: Awaited<ReturnType<typeof open>>;
   try {
-    fh = await open(fileReal, "r");
+    fh = await open(fileReal, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch {
     return invalid;
   }
   try {
+    const st = await fh.stat();
+    if (!st.isFile()) return { kind: "binary", text: "", truncated: false };
     const probe = Buffer.alloc(NUL_PROBE);
     const first = await fh.read(probe, 0, NUL_PROBE, 0);
     const n = first.bytesRead;
@@ -229,14 +327,19 @@ async function untrackedBody(top: string, paneFolder: string, statusPath: string
 }
 
 async function trackedBody(top: string, statusPath: string): Promise<DiffBody | GitFailure> {
-  const run = await runGit(top, ["-C", top, "--no-optional-locks", "diff", "--no-ext-diff", "--no-color", "-U3", "HEAD", "--", statusPath]);
+  const attributes = await diffAttributeSource(top);
+  if ("error" in attributes) return attributes;
+  const args = ["-C", top, "--no-optional-locks"];
+  if (attributes.source !== undefined) args.push("--attr-source", attributes.source);
+  args.push("diff", "--no-ext-diff", "--no-textconv", "--no-color", "-U3", "HEAD", "--", `:(literal)${statusPath}`);
+  const run = await runGit(top, args, { stdoutCap: DIFF_CAP });
   if ("error" in run) return run;
   const text = new TextDecoder().decode(run.stdout);
-  if (run.stdout.length === 0) return { kind: "empty", text: "", truncated: false };
+  if (run.stdout.length === 0 && !run.capped) return { kind: "empty", text: "", truncated: false };
   for (const line of text.split("\n")) {
     if (line === "GIT binary patch" || line.startsWith("Binary files ")) return { kind: "binary", text: "", truncated: false };
   }
-  const capped = capDiffText(text);
+  const capped = capDiffText(text, run.capped);
   return { kind: "diff", text: capped.text, truncated: capped.truncated };
 }
 
@@ -246,7 +349,7 @@ export async function paneChangeDiff(cwd: string, path: string): Promise<ChangeD
   if (run.type === "not_repository" || run.type === "failed") return run.failure;
   const row = run.rows.find((candidate) => candidate.path === path);
   if (row === undefined) return { error: "not_a_change", message: "path is not an uncommitted file" };
-  const top = await repositoryTop(cwd);
+  const top = await repositoryBound(cwd);
   if ("error" in top) return top;
   const body = row.code === "??" ? await untrackedBody(top.top, cwd, row.path) : await trackedBody(top.top, row.path);
   if ("error" in body) return body;
