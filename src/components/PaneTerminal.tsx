@@ -24,6 +24,7 @@ import { TerminalInput } from "./TerminalInput.tsx";
 import { SecretInput } from "./SecretInput.tsx";
 import { secretPrompt } from "../../shared/secret-prompt.ts";
 import { ChatView } from "./ChatView.tsx";
+import { ChangesView } from "./ChangesView.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { Composer } from "./Composer.tsx";
 import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, ServerMessage } from "../../shared/protocol.ts";
@@ -1581,6 +1582,7 @@ export function PaneTerminal({
           </RenderBoundary>
         )}
       </div>
+      {changesView && paneId !== null && <ChangesView key={paneId} paneId={paneId} />}
       {/* the queue is the composer's, so it shows under the chat lens only: there alone is an open
           Codex question known (heldByOpenQueue), and Send now must not type into one */}
       {paneId !== null && chatView && !observing && !ended && queueOwner !== null && queued.length > 0 && (

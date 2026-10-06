@@ -1,0 +1,77 @@
+.changes-view {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+  color: var(--text);
+  padding: var(--space-3);
+  gap: var(--space-2);
+}
+
+.changes-heading,
+.changes-note {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.changes-heading,
+.changes-from,
+.changes-line-head {
+  color: var(--text-dim);
+}
+
+.changes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.changes-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  width: 100%;
+  text-align: start;
+  background: var(--bg);
+  color: inherit;
+  border: 0;
+  padding: var(--space-1) 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.changes-row:hover {
+  background: var(--bg-hover);
+}
+
+.changes-code,
+.changes-path,
+.changes-diff {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+.changes-code,
+.changes-diff {
+  white-space: pre;
+}
+
+.changes-diff {
+  margin: 0;
+}
+
+.changes-line-add {
+  color: var(--status-done);
+}
+
+.changes-line-del {
+  color: var(--status-blocked);
+}
+
+.changes-back {
+  align-self: flex-start;
+}
