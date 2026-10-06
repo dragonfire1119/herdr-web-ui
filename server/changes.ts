@@ -113,11 +113,11 @@ function parsePorcelain(stdout: Uint8Array): StatusRow[] | GitFailure {
 }
 
 async function statusOf(cwd: string): Promise<StatusRun> {
-  // the missing-checkout test matches English stderr; other git spawns keep the process locale
+  const englishStatusStderr = { ...process.env, LC_ALL: "C" };
   const run = await runGit(
     cwd,
     ["-C", cwd, "--no-optional-locks", "status", "--porcelain=v1", "-z", "-uall", "--", "."],
-    { ...process.env, LC_ALL: "C" },
+    englishStatusStderr,
   );
   if ("error" in run) {
     if (run.error === "git_failed" && run.message.includes("not a git repository")) return { type: "not_repository", failure: run };

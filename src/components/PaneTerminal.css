@@ -24,6 +24,7 @@
 
 .terminal-stack.is-changes {
   position: relative;
+  --changes-cover: 2;
 }
 
 /* the grid keeps a small gutter of its own: the host (styles.css) has none, because the

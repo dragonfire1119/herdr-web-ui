@@ -49,10 +49,7 @@ export function storedPaneView(paneId: string, machineId: string, hasAgent: bool
   let stored: string | null = null;
   try {
     stored = globalThis.localStorage?.getItem(`herdr-web-ui:view:${paneStorageId(machineId, paneId)}`) ?? null;
-  } catch {
-    /* private mode */
-  }
-  // Stored Changes wins before the no-attach rule. Stored terminal on a PC with no attach is still chat.
+  } catch {}
   if (stored === "changes") return "changes";
   if (!terminalAttach) return "chat";
   if (stored === "chat" || stored === "terminal") return stored;
@@ -64,6 +61,12 @@ export function storedPaneView(paneId: string, machineId: string, hasAgent: bool
 function taken(next: { paneKey: string; contextKey: string; stored: PaneView }, prior: ChatOrTerminal | null): PaneLens {
   if (next.stored === "changes") return { paneKey: next.paneKey, contextKey: next.contextKey, view: "changes", prior };
   return { paneKey: next.paneKey, contextKey: next.contextKey, view: next.stored };
+}
+
+export function rememberPaneView(paneId: string, machineId: string, view: PaneView): void {
+  try {
+    globalThis.localStorage?.setItem(`herdr-web-ui:view:${paneStorageId(machineId, paneId)}`, view);
+  } catch {}
 }
 
 export function settlePaneLens(held: PaneLens, next: { paneKey: string; contextKey: string; stored: PaneView }): PaneLens {

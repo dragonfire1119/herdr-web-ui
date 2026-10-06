@@ -26,7 +26,7 @@ import { SnapshotRequests } from "./lib/snapshotRequests.ts";
 import { alertPrefs, useSettings } from "./lib/settings.ts";
 import { useShortcuts } from "./lib/shortcuts.ts";
 import type { AppActions, PaneView } from "./lib/actions.ts";
-import { jTarget, reducePaneLens, settlePaneLens, storedPaneView, type LensEvent, type PaneLens } from "./lib/paneLens.ts";
+import { jTarget, reducePaneLens, rememberPaneView, settlePaneLens, storedPaneView, type LensEvent, type PaneLens } from "./lib/paneLens.ts";
 import {
   notificationState,
   requestNotificationPermission,
@@ -546,13 +546,7 @@ export function App() {
       const next = reducePaneLens(current, event, { hasPane: selectionRef.current.paneId !== null, hasAgent: agentRef.current });
       if (next === current) return current;
       const paneId = selectionRef.current.paneId;
-      if (paneId !== null) {
-        try {
-          window.localStorage.setItem(`herdr-web-ui:view:${paneStorageId(selectionRef.current.machineId, paneId)}`, next.view);
-        } catch {
-          /* private mode: the lens just stops being remembered */
-        }
-      }
+      if (paneId !== null) rememberPaneView(paneId, selectionRef.current.machineId, next.view);
       return next;
     });
   }, []);

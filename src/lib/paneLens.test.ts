@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
-import { reducePaneLens, settlePaneLens, storedPaneView, jTarget, type PaneLens } from "./paneLens.ts";
+import { reducePaneLens, rememberPaneView, settlePaneLens, storedPaneView, jTarget, type PaneLens } from "./paneLens.ts";
 
 const chat: PaneLens = { paneKey: "p", contextKey: "c", view: "chat" };
 const terminal: PaneLens = { paneKey: "p", contextKey: "c", view: "terminal" };
@@ -69,6 +69,19 @@ describe("jTarget", () => {
   });
 });
 
+describe("rememberPaneView", () => {
+  it("writes the view key and ignores a storage that throws", () => {
+    rememberPaneView("p1", "local", "changes");
+    expect(store.get("herdr-web-ui:view:p1")).toBe("changes");
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: { setItem() { throw new Error("denied"); } },
+    });
+    expect(() => rememberPaneView("p1", "local", "terminal")).not.toThrow();
+    expect(store.get("herdr-web-ui:view:p1")).toBe("changes");
+  });
+});
+
 describe("settlePaneLens", () => {
   it("returns the same reference when nothing changed", () => {
     expect(settlePaneLens(fromChat, { paneKey: "p", contextKey: "c", stored: "changes" })).toBe(fromChat);
@@ -96,6 +109,14 @@ describe("storedPaneView", () => {
     expect(storedPaneView("p1", "local", true, true, "auto")).toBe("terminal");
     store.set("herdr-web-ui:view:p1", "chat");
     expect(storedPaneView("p1", "local", false, true, "terminal")).toBe("chat");
+  });
+
+  it("uses the default when storage throws", () => {
+    Object.defineProperty(globalThis, "localStorage", {
+      configurable: true,
+      value: { getItem() { throw new Error("denied"); } },
+    });
+    expect(storedPaneView("p1", "local", true, true, "terminal")).toBe("terminal");
   });
 
   it("never selects Changes from the settings default", () => {

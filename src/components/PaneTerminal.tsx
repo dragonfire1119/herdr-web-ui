@@ -869,7 +869,6 @@ export function PaneTerminal({
       commandBackspace = false;
       const current = paneRef.current;
       if (!current || observeRef.current || secretRef.current !== null || heldRef.current) return;
-      // a covered lens keeps the pty mounted: keystrokes must not reach it
       if (coversGridRef.current && !allowCoveredInputRef.current) return;
       let input = data;
       if (ctrlRef.current && isPrintable(data)) {
