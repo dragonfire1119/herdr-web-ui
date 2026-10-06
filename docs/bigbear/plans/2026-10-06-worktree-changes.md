@@ -1517,15 +1517,15 @@ git commit -m "feat(changes): open the Changes lens from the header and shortcut
 - Produces:
 
 ```ts
-export function fetchPaneChanges(paneId: string, machineId = "local"): Promise<ChangesResponse>;
-export function fetchPaneChangeDiff(paneId: string, path: string, machineId = "local"): Promise<ChangeDiffResponse>;
+export function fetchPaneChanges(paneId: string, machineId = "local", signal?: AbortSignal): Promise<ChangesResponse>;
+export function fetchPaneChangeDiff(paneId: string, path: string, machineId = "local", signal?: AbortSignal): Promise<ChangeDiffResponse>;
 ```
 
-`useMachineApi()` gains:
+`machineId` stays the second argument. `signal` is third and optional. `useMachineApi()` binds the machine id, so the component passes the signal as the wrapper's last argument:
 
 ```ts
-fetchPaneChanges: (pane: string) => api.fetchPaneChanges(pane, id),
-fetchPaneChangeDiff: (pane: string, path: string) => api.fetchPaneChangeDiff(pane, path, id),
+fetchPaneChanges: (pane: string, signal?: AbortSignal) => api.fetchPaneChanges(pane, id, signal),
+fetchPaneChangeDiff: (pane: string, path: string, signal?: AbortSignal) => api.fetchPaneChangeDiff(pane, path, id, signal),
 ```
 
 ```tsx
@@ -1537,8 +1537,8 @@ Private to the component file, not exported:
 ```ts
 type ListScreen =
   | { kind: "loading" }
-  | { kind: "empty" }
-  | { kind: "not_git" }
+  | { kind: "empty"; error: string | null }
+  | { kind: "not_git"; error: string | null }
   | { kind: "update" }
   | { kind: "error"; message: string }
   | { kind: "rows"; rows: readonly ChangeEntry[]; error: string | null };
@@ -1557,18 +1557,19 @@ type ChangesScreen =
 function diffLineKind(line: string): "add" | "del" | "head" | "text";
 ```
 
-`kind: "update"` has no rows. `kind: "rows"` is the only list that carries a poll error. `loading` is not a second flag on `rows`.
+`kind: "update"` has no rows, so a stale list cannot sit under the update sentence. `kind: "rows"`, `kind: "empty"`, and `kind: "not_git"` carry a poll `error` (`null` when the last request succeeded). `kind: "error"` is only the first failure, when no successful list is on screen. `loading` is not a second flag on `rows`. `empty` and `not_git` are successes (`git: false` and a clean checkout). A later failed poll keeps them and shows `Error.message` above the status sentence.
 
 List transitions, the only ones:
 
 - Mount, or `Back`: `{ mode: "list", list: { kind: "loading" } }`, then one fetch. `Back` is the only control that returns to the list while staying on Changes.
 - `git: true` and at least one row: `kind: "rows"`, `error: null`. Heading `1 file` when the length is 1, otherwise `t("{count} files", { count })`. No heading when there are no rows.
-- `git: true` and no rows: `kind: "empty"`. Copy `No uncommitted changes`.
-- `git: false`: `kind: "not_git"`. Copy `This workspace is not a git checkout`.
-- 404 whose `code` is `not_found`: `kind: "update"`. Copy `This PC needs an update to show changes.` Rows are dropped. This arms the 5 second timer like any other settled list response.
-- Any other failure, including a network `Error`, when the screen is not `rows`: `kind: "error"`, `message: error.message` (the `ApiError` text, not `detail`).
-- Any other failure when the screen is `rows`: stay `rows`, set `error` to `error.message`.
-- A response whose generation is not current, or whose abort signal has fired, is ignored and does not arm the timer.
+- `git: true` and no rows: `kind: "empty"`, `error: null`. Copy `No uncommitted changes`.
+- `git: false`: `kind: "not_git"`, `error: null`. Copy `This workspace is not a git checkout`.
+- 404 whose `code` is `not_found`: `kind: "update"`. Copy `This PC needs an update to show changes.` Rows, the empty sentence, and the not-git sentence are dropped. This arms the 5 second timer like any other settled list response.
+- Any other failure, including a network `Error`, when the screen is `loading`, `update`, or `error` (no successful list yet): `kind: "error"`, `message: error.message` (the `ApiError` text, not `detail`).
+- Any other failure when the screen is `rows`: stay `rows`, set `error` to `error.message` above the rows.
+- Any other failure when the screen is `empty` or `not_git`: keep that kind, set `error` to `error.message`. Render that note above the status sentence. The next success sets `error` back to `null`.
+- A response whose generation is not current, or whose abort signal has fired, is ignored and does not arm the timer. The abort is passed to `fetch`, so the previous list request is no longer in flight.
 - A settled current list response, success or failure, including `not_found`, arms one 5 second timer. The timer starts when the promise settles, not when it starts. It fires only while `mode` is still `list`. Opening a diff, leaving the lens, changing pane or machine, or unmounting clears it. Abort is not a failed poll.
 - A refresh does not move `rows` back to `loading`.
 - Tap a row: `{ mode: "diff", path, diff: { state: "loading" } }`. One fetch. No timer. A later response for another path is ignored. The row opens `entry.path`. `from {path}` is text, `t("from {path}", { path: entry.old_path })`.
@@ -1578,33 +1579,43 @@ List transitions, the only ones:
 
 `diffLineKind` checks the prefix table first, so `+++` and `---` are headers, then a leading `+` is an addition and a leading `-` is a deletion. Everything else is text. Do not reuse `ChatView.css` class names. Do not sort.
 
-The fetch signatures do not take an `AbortSignal`. The component aborts its own controller so a late settlement is ignored. The HTTP request may still finish.
+Both fetches take an optional `AbortSignal` and pass it to `getJson`, which passes it to `fetch`. The component aborts that controller when a new list or diff starts, when the pane or machine changes, and on unmount. An aborted `fetch` rejects. The `current()` check sees the aborted signal and returns without applying the body and without arming the timer. Abort is not a failed poll. At most one list request is in flight.
 
 - [ ] **Step 1: Write the failing component**
 
 Create `src/components/ChangesView.tsx` with the `t("…")` literals below and do not add the dictionary entries yet. Create `src/components/ChangesView.css`. Add the fetches and mount the component. The i18n scan fails until step 3 adds the translations.
 
-`src/lib/api.ts`, add `ChangeDiffResponse` and `ChangesResponse` to the protocol type import. After `fetchPaneFiles`:
+`src/lib/api.ts`, add `ChangeDiffResponse` and `ChangesResponse` to the protocol type import. Give `getJson` an optional second argument and pass it to `fetch` only when it is defined. Do not change the other `getJson` callers.
+
+```ts
+async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, signal === undefined ? undefined : { signal });
+  if (!response.ok) throw await errorFrom(url, response);
+  return (await response.json()) as T;
+}
+```
+
+After `fetchPaneFiles`:
 
 ```ts
 /** GET /api/pane/changes: uncommitted files in the pane folder. */
-export function fetchPaneChanges(paneId: string, machineId = "local"): Promise<ChangesResponse> {
+export function fetchPaneChanges(paneId: string, machineId = "local", signal?: AbortSignal): Promise<ChangesResponse> {
   const params = new URLSearchParams({ pane_id: paneId });
-  return getJson<ChangesResponse>(machinePath(machineId, `pane/changes?${params.toString()}`));
+  return getJson<ChangesResponse>(machinePath(machineId, `pane/changes?${params.toString()}`), signal);
 }
 
 /** GET /api/pane/changes/diff: one uncommitted file. `path` is the status path. */
-export function fetchPaneChangeDiff(paneId: string, path: string, machineId = "local"): Promise<ChangeDiffResponse> {
+export function fetchPaneChangeDiff(paneId: string, path: string, machineId = "local", signal?: AbortSignal): Promise<ChangeDiffResponse> {
   const params = new URLSearchParams({ pane_id: paneId, path });
-  return getJson<ChangeDiffResponse>(machinePath(machineId, `pane/changes/diff?${params.toString()}`));
+  return getJson<ChangeDiffResponse>(machinePath(machineId, `pane/changes/diff?${params.toString()}`), signal);
 }
 ```
 
 In `src/lib/machineContext.tsx`, next to `fetchPaneFiles`:
 
 ```ts
-fetchPaneChanges: (pane: string) => api.fetchPaneChanges(pane, id),
-fetchPaneChangeDiff: (pane: string, path: string) => api.fetchPaneChangeDiff(pane, path, id),
+fetchPaneChanges: (pane: string, signal?: AbortSignal) => api.fetchPaneChanges(pane, id, signal),
+fetchPaneChangeDiff: (pane: string, path: string, signal?: AbortSignal) => api.fetchPaneChangeDiff(pane, path, id, signal),
 ```
 
 Create `src/components/ChangesView.tsx`:
@@ -1619,8 +1630,8 @@ import "./ChangesView.css";
 
 type ListScreen =
   | { kind: "loading" }
-  | { kind: "empty" }
-  | { kind: "not_git" }
+  | { kind: "empty"; error: string | null }
+  | { kind: "not_git"; error: string | null }
   | { kind: "update" }
   | { kind: "error"; message: string }
   | { kind: "rows"; rows: readonly ChangeEntry[]; error: string | null };
@@ -1653,8 +1664,8 @@ function diffLineKind(line: string): "add" | "del" | "head" | "text" {
 }
 
 function listFromBody(body: ChangesResponse): ListScreen {
-  if (!body.git) return { kind: "not_git" };
-  if (body.changes.length === 0) return { kind: "empty" };
+  if (!body.git) return { kind: "not_git", error: null };
+  if (body.changes.length === 0) return { kind: "empty", error: null };
   return { kind: "rows", rows: body.changes, error: null };
 }
 
@@ -1662,6 +1673,8 @@ function listFromFailure(current: ListScreen, error: unknown): ListScreen {
   if (error instanceof ApiError && error.status === 404 && error.code === "not_found") return { kind: "update" };
   const message = error instanceof Error ? error.message : String(error);
   if (current.kind === "rows") return { kind: "rows", rows: current.rows, error: message };
+  if (current.kind === "empty") return { kind: "empty", error: message };
+  if (current.kind === "not_git") return { kind: "not_git", error: message };
   return { kind: "error", message };
 }
 
@@ -1716,7 +1729,7 @@ export function ChangesView({ paneId }: { paneId: string }): JSX.Element {
         startListRef.current(false);
       }, LIST_POLL_MS);
     };
-    void fetchListRef.current(paneId).then(
+    void fetchListRef.current(paneId, controller.signal).then(
       (body) => {
         if (!current(ticket, controller)) return;
         commit({ mode: "list", list: listFromBody(body) });
@@ -1738,7 +1751,7 @@ export function ChangesView({ paneId }: { paneId: string }): JSX.Element {
     abortRef.current = controller;
     const ticket = ++generation.current;
     commit({ mode: "diff", path, diff: { state: "loading" } });
-    void fetchDiffRef.current(paneId, path).then(
+    void fetchDiffRef.current(paneId, path, controller.signal).then(
       (body) => {
         if (!current(ticket, controller) || body.path !== path) return;
         commit({ mode: "diff", path, diff: { state: "ready", body } });
@@ -1781,6 +1794,7 @@ export function ChangesView({ paneId }: { paneId: string }): JSX.Element {
         <h2 className="changes-heading">{list.rows.length === 1 ? t("1 file") : t("{count} files", { count: list.rows.length })}</h2>
       )}
       {list.kind === "rows" && list.error !== null && <p className="changes-note" role="status">{list.error}</p>}
+      {(list.kind === "empty" || list.kind === "not_git") && list.error !== null && <p className="changes-note" role="status">{list.error}</p>}
       {list.kind === "empty" && <p className="changes-note" role="status">{t("No uncommitted changes")}</p>}
       {list.kind === "not_git" && <p className="changes-note" role="status">{t("This workspace is not a git checkout")}</p>}
       {list.kind === "update" && <p className="changes-note" role="status">{t("This PC needs an update to show changes.")}</p>}
