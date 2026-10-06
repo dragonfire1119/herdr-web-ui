@@ -433,6 +433,29 @@ describe("paneChangeDiff", () => {
     expect(body.text).not.toContain("CLEAN-SECRET");
   });
 
+  it("does not list or diff another checkout through a separate git dir", async () => {
+    const root = scratch();
+    const victim = join(root, "victim");
+    const pane = join(root, "pane");
+    const gitDir = join(root, "separate-git");
+    mkdirSync(victim);
+    mkdirSync(pane);
+    git(victim, "init", "-q", "-b", "main");
+    writeFileSync(join(victim, "secret.txt"), "base\n");
+    git(victim, "add", "--", "secret.txt");
+    git(victim, "commit", "-q", "-m", "base");
+    writeFileSync(join(victim, "secret.txt"), "USER-SECRET-BYTES\n");
+    git(pane, "init", "-q", "--separate-git-dir", gitDir);
+    git(pane, "config", "core.worktree", victim);
+    const listedResult = await paneChanges(pane);
+    expect(listedResult).toMatchObject({ error: "git_failed" });
+    expect(JSON.stringify(listedResult)).not.toContain("USER-SECRET-BYTES");
+    expect(JSON.stringify(listedResult)).not.toContain("secret.txt");
+    const diffResult = await paneChangeDiff(pane, "secret.txt");
+    expect(diffResult).toMatchObject({ error: "git_failed" });
+    expect(JSON.stringify(diffResult)).not.toContain("USER-SECRET-BYTES");
+  });
+
   it("does not list or diff a pane whose git dir is another checkout", async () => {
     const victim = scratch();
     git(victim, "init", "-q", "-b", "main");

@@ -297,12 +297,15 @@ async function repositoryBound(cwd: string): Promise<{ top: string } | GitFailur
   if (top === undefined || gitDir === undefined || top.length === 0 || gitDir.length === 0) return failed;
   let topReal: string;
   let gitReal: string;
+  let paneReal: string;
   try {
     topReal = await realpath(top);
     gitReal = await realpath(gitDir);
+    paneReal = await realpath(cwd);
   } catch {
     return failed;
   }
+  if (!insideFolder(paneReal, topReal)) return failed;
   if (basename(gitReal) === ".git") {
     const owner = await realpath(dirname(gitReal));
     if (owner !== topReal) return failed;

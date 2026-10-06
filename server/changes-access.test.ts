@@ -14,7 +14,7 @@ it("a watch device can ask for the change list and cannot read a diff", async ()
   const base = `http://127.0.0.1:${server.port}`;
   const headers = { cookie: `herdr_web_device=${watch!.token}` };
   try {
-    for (const path of ["pane/changes/diff?pane_id=absent&path=secret.txt", "machines/pc1/pane/changes/diff?pane_id=absent&path=secret.txt"]) {
+    for (const path of ["pane/changes/diff?pane_id=absent&path=secret.txt", "machines/pc1/pane/changes/diff?pane_id=absent&path=secret.txt", "machines/pc1/pane/changes/diff/?pane_id=absent&path=secret.txt"]) {
       const response = await fetch(`${base}/api/${path}`, { headers });
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ error: { code: "read_only" } });
