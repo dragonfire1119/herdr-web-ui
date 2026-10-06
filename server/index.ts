@@ -13,6 +13,7 @@ import { DeviceStore, handleDeviceRequest } from "./devices.ts";
 import { remoteAccess, tailscaleIdentity } from "./tailscale.ts";
 import { paneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
+import { paneChangeDiff, paneChanges, type ChangeDiffResult, type ChangesResult } from "./changes.ts";
 import { badRequest, errorResponse, isCount, isJsonObject, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
 import { startStatusCollector } from "./collector.ts";
@@ -177,6 +178,14 @@ async function paneContext(paneId: string): Promise<{ agent: string | null; cwd:
   const cwd = pane.foreground_cwd ?? pane.cwd;
   if (!cwd) throw new HerdrError("cwd_not_found", `pane ${paneId} has no working directory`);
   return { agent: pane.agent ?? pane.agent_session?.agent ?? null, cwd };
+}
+
+function respondChanges(result: ChangesResult | ChangeDiffResult): Response {
+  if ("error" in result) {
+    const status = result.error === "invalid_path" ? 400 : result.error === "not_a_change" ? 404 : 502;
+    return jsonResponse({ error: { code: result.error, message: result.message } }, status);
+  }
+  return jsonResponse(result);
 }
 
 type AgentPayload = { kind?: unknown; name?: unknown; args?: unknown };
@@ -1430,6 +1439,22 @@ export function createServer(
           const limit = limitRaw === null ? 20 : Number(limitRaw);
           if (!Number.isInteger(limit) || limit < 1) return badRequest("invalid_limit", "limit must be a positive integer");
           return jsonResponse({ files: await paneFiles(context.cwd, url.searchParams.get("q") ?? "", Math.min(limit, 100)) });
+        } catch (error) {
+          return errorResponse(error);
+        }
+      }
+
+      if (pathname === "/api/pane/changes" || pathname === "/api/pane/changes/diff") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        const paneId = url.searchParams.get("pane_id");
+        if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
+        bunServer.timeout(request, pathname === "/api/pane/changes" ? 15 : 35);
+        try {
+          const { cwd } = await paneContext(paneId);
+          const result = pathname === "/api/pane/changes"
+            ? await paneChanges(cwd)
+            : await paneChangeDiff(cwd, url.searchParams.get("path") ?? "");
+          return respondChanges(result);
         } catch (error) {
           return errorResponse(error);
         }
