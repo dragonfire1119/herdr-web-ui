@@ -227,6 +227,20 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
     await page.waitForTimeout(75);
     assert.equal(sent.length, switchBefore);
     console.log("PASS xterm composition: local preedit, delayed multi-commit burst, punctuation order, Korean final-consonant movement, pane-reset cancellation");
+
+    await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
+    await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
+    await setMode("direct");
+    await page.locator(".xterm").click();
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea") ?? false), true, "direct mode focuses the terminal");
+    const coveredBefore = sent.length;
+    await page.keyboard.press("ControlOrMeta+Shift+KeyG");
+    await page.locator(".changes-view").waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains("xterm-helper-textarea") ?? false), false, "Changes blurs the terminal");
+    await page.keyboard.type("QAFOCUSLEAK");
+    await page.waitForTimeout(200);
+    assert.equal(sent.slice(coveredBefore).some((frame) => String(frame.text ?? "").includes("QAFOCUSLEAK")), false, "keys under Changes must not reach the pty");
+    console.log("PASS changes lens drops terminal keys");
     assert.deepEqual(errors, []);
     console.log("PASS terminal input: desktop mode, owner drafts, reload, IME button, late ack, shortcuts, readiness, explicit send");
   } finally { await context.close(); }

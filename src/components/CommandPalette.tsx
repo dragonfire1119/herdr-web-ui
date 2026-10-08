@@ -1,11 +1,11 @@
 import { useMachineId } from "../lib/machineContext.tsx";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from "react";
-import { Bell, FolderOpen, LockKeyhole, MessageSquarePlus, Monitor, PanelLeft, Plus, RefreshCw, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
+import { Bell, FileDiff, FolderOpen, LockKeyhole, MessageSquarePlus, Monitor, PanelLeft, Plus, RefreshCw, Settings, SunMoon, SwitchCamera, X } from "lucide-react";
 
 import "./CommandPalette.css";
 
 import type { PaneInfo, SessionSnapshot } from "../../shared/protocol.ts";
-import type { AppActions, PaneView } from "../lib/actions.ts";
+import type { AppActions } from "../lib/actions.ts";
 import { rankPanes } from "../lib/paletteSearch.ts";
 import { SHORTCUTS, formatKeys, type ShortcutId } from "../lib/shortcuts.ts";
 import { AgentMark } from "./AgentMark.tsx";
@@ -21,7 +21,7 @@ interface CommandPaletteProps {
   onClose: () => void;
   snapshot: SessionSnapshot | null;
   selectedPaneId: string | null;
-  view: PaneView;
+  switchTo: "chat" | "terminal";
   actions: AppActions;
 }
 
@@ -65,7 +65,7 @@ function ShortcutHint({ shortcutId }: { shortcutId?: ShortcutId }) {
   return <span className="palette-shortcut" aria-label={formatKeys(shortcut.keys).join(" + ")}>{formatKeys(shortcut.keys).map((key) => <kbd className="kbd" key={key}>{key}</kbd>)}</span>;
 }
 
-export function CommandPalette({ open, onClose, snapshot, selectedPaneId, view, actions }: CommandPaletteProps) {
+export function CommandPalette({ open, onClose, snapshot, selectedPaneId, switchTo, actions }: CommandPaletteProps) {
   const t = useT();
   const machineId = useMachineId();
   const [query, setQuery] = useState("");
@@ -104,7 +104,8 @@ export function CommandPalette({ open, onClose, snapshot, selectedPaneId, view, 
     { id: "new", label: t("New workspace"), icon: MessageSquarePlus, shortcut: "new-session", run: actions.openNewSession },
     // in the selected pane's workspace: nothing to add a tab to without one
     ...(selectedPaneId !== null ? [{ id: "new-tab", label: t("New tab"), icon: Plus, run: () => actions.openNewTab() }] : []),
-    { id: "view", label: t(view === "chat" ? "Switch to terminal" : "Switch to chat"), icon: SwitchCamera, shortcut: "toggle-view", run: actions.toggleView },
+    { id: "view", label: t(switchTo === "terminal" ? "Switch to terminal" : "Switch to chat"), icon: SwitchCamera, shortcut: "toggle-view", run: actions.toggleView },
+    { id: "changes", label: t("Changes"), icon: FileDiff, shortcut: "show-changes", run: actions.showChanges },
     { id: "sidebar", label: t("Toggle sidebar"), icon: PanelLeft, shortcut: "toggle-sidebar", run: actions.toggleSidebar },
     { id: "theme", label: t("Toggle theme"), icon: SunMoon, run: actions.toggleTheme },
     { id: "settings", label: t("Settings"), icon: Settings, shortcut: "settings", run: actions.openSettings },
@@ -113,7 +114,7 @@ export function CommandPalette({ open, onClose, snapshot, selectedPaneId, view, 
     ...(actions.lock ? [{ id: "lock", label: t("Sign out"), icon: LockKeyhole, run: actions.lock }] : []),
     ...(actions.openFiles ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: actions.openFiles }] : []),
     { id: "refresh", label: t("Refresh"), icon: RefreshCw, run: actions.refresh },
-  ], [actions, view, t, selectedPaneId]);
+  ], [actions, switchTo, t, selectedPaneId]);
 
   const panes = useMemo(() => {
     const allPanes = snapshot?.panes ?? [];

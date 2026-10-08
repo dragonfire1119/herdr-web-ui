@@ -54,6 +54,7 @@ it("takes the chat's surface only when the chat is what the pane column draws", 
   expect(showsChat({}, "chat")).toBe(true);
   expect(showsChat({ restore_error: null }, "chat")).toBe(true);
   expect(showsChat({}, "terminal")).toBe(false);
+  expect(showsChat({}, "changes")).toBe(false);
   expect(showsChat(null, "chat")).toBe(false);
   // a pane herdr could not restore draws the placeholder on the terminal's surface, not the chat
   expect(showsChat({ restore_error: "no such session" }, "chat")).toBe(false);

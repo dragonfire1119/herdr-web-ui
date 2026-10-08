@@ -22,6 +22,11 @@
   height: 100%;
 }
 
+.terminal-stack.is-changes {
+  position: relative;
+  --changes-cover: 2;
+}
+
 /* the grid keeps a small gutter of its own: the host (styles.css) has none, because the
    chat lens and the composer want the full width. The gutter sits on .xterm itself, not
    on the mount: the fit addon subtracts the terminal element's padding but reads the
@@ -295,5 +300,9 @@
    the screen is not intersecting, and repaints in full on return). The box keeps its size,
    so the grid never refits to zero */
 .terminal-stack.is-chat .pane-terminal {
+  content-visibility: hidden;
+}
+
+.terminal-stack.covers-grid .pane-terminal {
   content-visibility: hidden;
 }

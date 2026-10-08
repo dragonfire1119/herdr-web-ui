@@ -85,6 +85,9 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  *         clock, which the times are on)
  *  GET    /api/pane/files?pane_id=&q=&limit=  -> { files: string[] } (paths relative to the pane
  *         cwd matching q, for @-mentions; git ls-files when the cwd is a repo, bounded walk otherwise)
+ *  GET    /api/pane/changes?pane_id=         -> ChangesResponse (uncommitted files in the pane
+ *         folder; git:false when that folder is not a checkout)
+ *  GET    /api/pane/changes/diff?pane_id=&path= -> ChangeDiffResponse (one of those files)
  *  GET    /api/pane/prompt?pane_id=     -> { prompt: InteractivePrompt | null, suggestion: string | null }
  *         (the agent's TUI question/approval menu currently on screen, parsed from the visible pane
  *         text; with no menu, the next prompt Claude Code suggests, grey in its empty input box)
@@ -527,6 +530,30 @@ export interface SlashCommand {
   source: "builtin" | "user" | "project" | "skill" | "plugin";
   /** `$`: typed as `$name` (Codex skills); otherwise `/name` */
   trigger?: "$";
+}
+
+export interface ChangeEntry {
+  path: string;
+  /** Two porcelain characters, such as " M", "M ", "MM", "??", "R ", "D ". Not trimmed. */
+  code: string;
+  /** Set only for a rename or copy. The previous path. */
+  old_path?: string;
+}
+
+export interface ChangesResponse {
+  /** False when the pane folder is not a git checkout. */
+  git: boolean;
+  changes: ChangeEntry[];
+}
+
+export interface ChangeDiffResponse {
+  path: string;
+  old_path?: string;
+  code: string;
+  /** "diff" is unified text. "untracked" is unified text of a new file. "binary" and "empty" have text "". */
+  kind: "diff" | "untracked" | "binary" | "empty";
+  truncated: boolean;
+  text: string;
 }
 
 /**

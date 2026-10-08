@@ -262,6 +262,13 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const q = (query.get("q") ?? "").toLowerCase();
     return json({ files: DEMO_FILES.filter((file) => file.toLowerCase().includes(q)).slice(0, Number(query.get("limit") ?? 20)) });
   }
+  if (path === "/api/pane/changes") return json({ git: true, changes: [{ path: "notes.txt", code: "??" }, { path: "src/app.ts", code: " M" }] });
+  if (path === "/api/pane/changes/diff") {
+    const asked = query.get("path");
+    if (asked === "src/app.ts") return json({ path: asked, code: " M", kind: "diff", truncated: false, text: "--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1 +1 @@\n-old\n+new\n" });
+    if (asked === "notes.txt") return json({ path: asked, code: "??", kind: "untracked", truncated: false, text: "--- /dev/null\n+++ b/notes.txt\n@@ -0,0 +1 @@\n+hello\n" });
+    return error("not_a_change", "path is not an uncommitted file", 404);
+  }
   if (path === "/api/pane/input" || path === "/api/pane/keys") return json({ ok: true });
   if (path === "/api/pane/rename") {
     const body = await bodyOf(init, input);

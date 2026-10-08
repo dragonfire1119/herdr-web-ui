@@ -1,6 +1,8 @@
 import { machinePath, type BridgeHealth, type HerdrIdentity, type Machine, type SetupAction, type SetupJob, type SetupRequest } from "../../shared/machines.ts";
 import type {
   AgentKind,
+  ChangeDiffResponse,
+  ChangesResponse,
   ConversationResponse,
   CreateWorktreeRequest,
   CreateTabRequest,
@@ -98,8 +100,8 @@ async function errorFrom(url: string, response: Response): Promise<ApiError> {
   return new ApiError(url, response.status, detail, code);
 }
 
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, signal === undefined ? undefined : { signal });
   if (!response.ok) throw await errorFrom(url, response);
   return (await response.json()) as T;
 }
@@ -441,6 +443,18 @@ export async function fetchPaneOmoActivity(paneId: string, machineId = "local"):
 export async function fetchPaneFiles(paneId: string, query: string, limit = 20, machineId = "local"): Promise<string[]> {
   const params = new URLSearchParams({ pane_id: paneId, q: query, limit: String(limit) });
   return (await getJson<{ files: string[] }>(machinePath(machineId, `pane/files?${params.toString()}`))).files;
+}
+
+/** GET /api/pane/changes: uncommitted files in the pane folder. */
+export function fetchPaneChanges(paneId: string, machineId = "local", signal?: AbortSignal): Promise<ChangesResponse> {
+  const params = new URLSearchParams({ pane_id: paneId });
+  return getJson<ChangesResponse>(machinePath(machineId, `pane/changes?${params.toString()}`), signal);
+}
+
+/** GET /api/pane/changes/diff: one uncommitted file. `path` is the status path. */
+export function fetchPaneChangeDiff(paneId: string, path: string, machineId = "local", signal?: AbortSignal): Promise<ChangeDiffResponse> {
+  const params = new URLSearchParams({ pane_id: paneId, path });
+  return getJson<ChangeDiffResponse>(machinePath(machineId, `pane/changes/diff?${params.toString()}`), signal);
 }
 
 /** GET /api/pane/prompt: the agent's interactive menu currently on screen, or null. */

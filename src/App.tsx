@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Ellipsis, FolderOpen, Lock, Menu, MessageSquare, PanelLeft, Plus, Search, SquareTerminal, X } from "lucide-react";
+import { Bell, Ellipsis, FileDiff, FolderOpen, Lock, Menu, MessageSquare, PanelLeft, Plus, Search, SquareTerminal, X } from "lucide-react";
 
 import type { AgentStatus, ClientRole, ServerMessage, AccessRefusal, HealthAuth, HerdrPane } from "../shared/protocol.ts";
 import { ApiError, authenticate, fetchHealth, fetchBridgeHealth, fetchMachines, fetchSession, pairDevice, sendTestPush, signOut, type HealthInfo } from "./lib/api.ts";
@@ -23,9 +23,10 @@ import { takeAuthTokenFromUrl } from "./lib/authLink.ts";
 import { applyPaneStatus } from "./lib/snapshot.ts";
 import { rosterPanes } from "./lib/dagPane.ts";
 import { SnapshotRequests } from "./lib/snapshotRequests.ts";
-import { alertPrefs, useSettings, type DefaultView } from "./lib/settings.ts";
+import { alertPrefs, useSettings } from "./lib/settings.ts";
 import { useShortcuts } from "./lib/shortcuts.ts";
 import type { AppActions, PaneView } from "./lib/actions.ts";
+import { jTarget, reducePaneLens, rememberPaneView, settlePaneLens, storedPaneView, type LensEvent, type PaneLens } from "./lib/paneLens.ts";
 import {
   notificationState,
   requestNotificationPermission,
@@ -91,30 +92,6 @@ function storeSelection(machineId: string, paneId: string | null): void {
   for (const storage of ["sessionStorage", "localStorage"] as const) {
     try { window[storage].setItem(SELECTION_KEY, JSON.stringify({ machine_id: machineId, pane_id: paneId })); } catch {}
   }
-}
-
-/**
- * The lens a pane opens in: remembered per pane. A pane seen for the first time opens its
- * terminal, except an agent pane on a touch screen, which opens its chat: a phone reads a
- * conversation better than a TUI sized for a desktop. Until the snapshot says whether the
- * pane has an agent (null), a touch screen guesses chat: most panes opened there are agents,
- * and guessing terminal flashed it for the seconds before the snapshot arrived. A PC whose
- * herdr has no terminal attach and no mirror either (an older Windows bridge) always opens
- * its chat: its terminal lens is only a notice, so a remembered choice there is not worth
- * keeping. A mirrored PC counts as having a terminal.
- */
-function storedView(paneId: string, machineId: string, hasAgent: boolean | null, terminalAttach: boolean, defaultView: DefaultView): PaneView {
-  if (!terminalAttach) return "chat";
-  try {
-    const stored = window.localStorage.getItem(`herdr-web-ui:view:${paneStorageId(machineId, paneId)}`);
-    if (stored === "chat" || stored === "terminal") return stored;
-  } catch {
-    /* private mode */
-  }
-  // Settings' choice for every pane: chat needs an agent, a shell has no conversation to show
-  if (defaultView === "chat") return hasAgent !== false ? "chat" : "terminal";
-  if (defaultView === "terminal") return "terminal";
-  return hasAgent !== false && window.matchMedia?.("(pointer: coarse)").matches === true ? "chat" : "terminal";
 }
 
 function Brand() {
@@ -192,7 +169,7 @@ export function App() {
   // on a phone the drawer follows a swipe in from the left edge, and a swipe back (lib/edgeSwipe.ts)
   useEffect(() => watchDrawerSwipe(() => drawerOpenRef.current, setDrawerOpen), []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [lens, setLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
+  const [lens, setLens] = useState<PaneLens>({ paneKey: "", contextKey: "", view: "terminal" });
   const [paletteOpen, setPaletteOpen] = useState(false);
   // the header's More menu: its button, and whether it opened on a phone-width screen
   const [more, setMore] = useState<{ anchor: HTMLElement; phone: boolean } | null>(null);
@@ -551,26 +528,32 @@ export function App() {
   // the lens follows the selected pane: each pane remembers its own. It is settled in the render
   // that selects the pane, not in an effect after it: the pane's terminal attaches in that render's
   // layout effect, and an attach in the previous pane's lens resized a pane whose lens is chat
-  const lensKey = JSON.stringify([selectedPaneId, selectedMachineId, selectedPane !== null, selectedAgent !== null, terminalAttach, settings.defaultView]);
-  let view = lens.view;
-  if (lens.key !== lensKey) {
-    if (selectedPaneId !== null) view = storedView(selectedPaneId, selectedMachineId, selectedPane ? selectedAgent !== null : null, terminalAttach, settings.defaultView);
-    setLens({ key: lensKey, view });
-  }
+  const paneKey = selectedPaneId === null ? "" : paneStorageId(selectedMachineId, selectedPaneId);
+  const contextKey = JSON.stringify([selectedPane !== null, selectedAgent !== null, terminalAttach, settings.defaultView]);
+  const stored = selectedPaneId === null
+    ? lens.view
+    : storedPaneView(selectedPaneId, selectedMachineId, selectedPane ? selectedAgent !== null : null, terminalAttach, settings.defaultView);
+  const settled = settlePaneLens(lens, { paneKey, contextKey, stored });
+  if (settled !== lens) setLens(settled);
+  const view = settled.view;
+  const switchTo = jTarget(settled, selectedAgent !== null);
+  const agentRef = useRef(selectedAgent !== null);
+  agentRef.current = selectedAgent !== null;
 
-  const setView = useCallback(
-    (next: PaneView) => {
-      setLens((current) => ({ ...current, view: next }));
-      setAutoSelected(false);
-      if (selectedPaneId === null) return;
-      try {
-        window.localStorage.setItem(`herdr-web-ui:view:${paneStorageId(selectedMachineId, selectedPaneId)}`, next);
-      } catch {
-        /* private mode: the lens just stops being remembered */
-      }
-    },
-    [selectedPaneId, selectedMachineId],
-  );
+  const applyLens = useCallback((event: LensEvent) => {
+    setAutoSelected(false);
+    setLens((current) => {
+      const next = reducePaneLens(current, event, { hasPane: selectionRef.current.paneId !== null, hasAgent: agentRef.current });
+      if (next === current) return current;
+      const paneId = selectionRef.current.paneId;
+      if (paneId !== null) rememberPaneView(paneId, selectionRef.current.machineId, next.view);
+      return next;
+    });
+  }, []);
+
+  const setView = useCallback((next: PaneView) => {
+    applyLens(next === "changes" ? { type: "press-changes" } : { type: "press", view: next });
+  }, [applyLens]);
 
   // The Alerts item says what this device does, whatever the browser's permission: in-app alerts
   // need none, so they count as on. A device that has not answered the permission question is
@@ -620,7 +603,8 @@ export function App() {
         if (next) selectPane(next.pane_id);
       },
       setView,
-      toggleView: () => setView(view === "chat" ? "terminal" : "chat"),
+      toggleView: () => applyLens({ type: "cycle" }),
+      showChanges: () => applyLens({ type: "show-changes" }),
       openNewSession: () => {
         setDrawerOpen(false);
         setNewSessionMachineId(selectedMachineId);
@@ -668,7 +652,7 @@ export function App() {
       refresh: () => void load(),
       openFiles: selectedPaneId !== null ? () => { setDrawerOpen(false); setFilesOpen(true); } : null,
     }),
-    [selectPane, selectedPaneId, selectedMachineId, setView, view, updateSettings, resolvedTheme, canSignOut, lock, bellVisible, bell.run, enableNotifications, load],
+    [selectPane, selectedPaneId, selectedMachineId, setView, applyLens, updateSettings, resolvedTheme, canSignOut, lock, bellVisible, bell.run, enableNotifications, load],
   );
 
   useShortcuts(actions, locked === false);
@@ -779,6 +763,10 @@ export function App() {
               <span className="header-desktop-only">{t("Terminal")}</span>
               {!terminalAttach && <span className="pill pill-soon">{t("soon")}</span>}
             </button>
+            <button type="button" aria-pressed={view === "changes"} onClick={() => setView("changes")} title={t("Changes (⌘⇧G)")}>
+              <FileDiff />
+              <span className="header-desktop-only">{t("Changes")}</span>
+            </button>
           </div>
         )}
         <div className="header-meta">
@@ -871,6 +859,7 @@ export function App() {
             onRoleAck={setRole}
             onConnectionChange={(next) => { setConnected(next); if (next) setOutputStopped(false); }}
             onServerMessage={handleServerMessage}
+            onCloseChanges={() => applyLens({ type: "show-changes" })}
           />
         </main>
         </div>
@@ -905,7 +894,7 @@ export function App() {
       {viewing !== null && <MachineContext.Provider value={viewing.machineId}>
         <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path })} />
       </MachineContext.Provider>}
-      <CommandPalette key={selectedMachineId} open={paletteOpen} onClose={() => setPaletteOpen(false)} snapshot={snapshot} selectedPaneId={selectedPaneId} view={view} actions={actions} />
+      <CommandPalette key={selectedMachineId} open={paletteOpen} onClose={() => setPaletteOpen(false)} snapshot={snapshot} selectedPaneId={selectedPaneId} switchTo={switchTo} actions={actions} />
     </div></MachineContext.Provider>
   );
 }

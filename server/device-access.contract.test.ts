@@ -121,6 +121,11 @@ it("watch credentials cannot mutate HTTP state, read credential files, or elevat
       expect((await fetch(`${base}/api/${path}`, { method: "POST", headers, body: "{}" })).status).toBe(403);
     }
     expect((await fetch(`${base}/api/fs/file?path=${encodeURIComponent(join(root, "devices.json"))}`, { headers })).status).toBe(403);
+    for (const path of ["pane/changes/diff?pane_id=absent&path=secret.txt", "machines/pc1/pane/changes/diff?pane_id=absent&path=secret.txt"]) {
+      const response = await fetch(`${base}/api/${path}`, { headers });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ error: { code: "read_only" } });
+    }
     // a PC's file is read without the origin check (#448, Android's Open button): the watch refusal still comes first, for GET and HEAD alike
     for (const method of ["GET", "HEAD"]) {
       const response = await fetch(`${base}/api/machines/pc1/fs/file?path=%2Fetc%2Fhostname`, { method, headers: { ...headers, "sec-fetch-site": "cross-site" } });

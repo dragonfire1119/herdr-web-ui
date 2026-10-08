@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, existsSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { createServer } from "./index.ts";
-import type { AgentKind, AgentStatus, ApiError, HealthAuth, PushKey, RemoteAccess, SessionSnapshot, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
+import type { AgentKind, AgentStatus, ApiError, ChangeDiffResponse, ChangesResponse, HealthAuth, PushKey, RemoteAccess, SessionSnapshot, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
 import { HerdrUpdater } from "./herdr-update.ts";
 import type { HerdrUpdateStatus } from "../shared/update.ts";
 import { USAGE_PROVIDERS, UsageService } from "./usage.ts";
@@ -2173,4 +2173,62 @@ it("refuses cross-origin changes while allowing same-origin and CLI requests", a
       expect(response.status).toBe(200);
     }
   } finally { instance.stop(); await workspaceClose(created.workspace.workspace_id); rmSync(root, { recursive: true, force: true }); }
+});
+
+describe("GET /api/pane/changes", () => {
+  const repo = mkdtempSync(join(tmpdir(), "herdr-web-ui-changes-"));
+  let workspaceId: string | null = null;
+
+  function git(...args: string[]): void {
+    const result = Bun.spawnSync(
+      ["git", "-c", "core.autocrlf=false", "-c", "user.name=herdr-web-ui test", "-c", "user.email=test@example.invalid", ...args],
+      { cwd: repo, stdout: "pipe", stderr: "pipe" },
+    );
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString());
+  }
+
+  afterAll(async () => {
+    if (workspaceId) await workspaceClose(workspaceId).catch(() => undefined);
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  async function waitForFolder(paneId: string, folder: string): Promise<void> {
+    const want = realpathSync(folder);
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const snapshot = await sessionSnapshot();
+      const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
+      const cwd = pane?.foreground_cwd ?? pane?.cwd;
+      if (cwd && realpathSync(cwd) === want) return;
+      if (Date.now() > deadline) throw new Error(`pane folder stayed ${cwd ?? "missing"}`);
+      await Bun.sleep(50);
+    }
+  }
+
+  it("lists an uncommitted edit and diffs it", async () => {
+    git("init", "-q", "-b", "main");
+    writeFileSync(join(repo, "tracked.txt"), "before\n");
+    git("add", "--", "tracked.txt");
+    git("commit", "-q", "-m", "fixture");
+    writeFileSync(join(repo, "tracked.txt"), "after\n");
+    const created = await workspaceCreate({ cwd: repo, label: "herdr-web-ui-test-changes" });
+    workspaceId = created.workspace.workspace_id;
+    const paneId = created.root_pane.pane_id;
+    await waitForFolder(paneId, repo);
+
+    const list = await fetch(`${base()}/api/pane/changes?pane_id=${encodeURIComponent(paneId)}`);
+    expect(list.status).toBe(200);
+    const listed = (await list.json()) as ChangesResponse;
+    expect(listed.git).toBe(true);
+    const row = listed.changes.find((entry) => entry.path === "tracked.txt");
+    expect(row?.code).toHaveLength(2);
+
+    const diff = await fetch(`${base()}/api/pane/changes/diff?pane_id=${encodeURIComponent(paneId)}&path=${encodeURIComponent("tracked.txt")}`);
+    expect(diff.status).toBe(200);
+    expect(((await diff.json()) as ChangeDiffResponse).text).toContain("after");
+
+    const missing = await fetch(`${base()}/api/pane/changes/diff?pane_id=${encodeURIComponent(paneId)}&path=${encodeURIComponent("nope.txt")}`);
+    expect(missing.status).toBe(404);
+    expect(((await missing.json()) as { error: { code: string } }).error.code).toBe("not_a_change");
+  }, 20_000);
 });
